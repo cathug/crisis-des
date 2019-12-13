@@ -34,15 +34,19 @@ RISKLEVEL_WEIGHTS = {
     'LOW':      .82,
 } # Distribution of LOW/MEDIUM/HIGH/CRISIS - 82%/16%/1.5%/0.5%
 
+USERTYPE_WEIGHTS = {
+    'REPEATED_USER': , .08
+    'REGULAR_USER': , .92
+}
 
 
 ################################################################################
 # Drawing arrival times from distribitions
 ################################################################################
 
-def get_interarrival_time(mean_interarrival_time):
+def assign_interarrival_time(mean_interarrival_time):
     '''
-        Interarrival time getter
+        Getter to assign interarrival time
 
         param:
             mean_interarrival_time - mean interarrival time between helpseekers
@@ -52,9 +56,9 @@ def get_interarrival_time(mean_interarrival_time):
 
 #-------------------------------------------------------------------------------
 
-def get_chat_duration(mean_chat_duration):
+def assign_chat_duration(mean_chat_duration):
     '''
-        Chat duration getter
+        Getter to assign chat duration
 
         param:
             mean_chat_duration - mean chat duration of a conversation
@@ -64,13 +68,23 @@ def get_chat_duration(mean_chat_duration):
 
 #-------------------------------------------------------------------------------
 
-def get_priority():
+def assign_priority():
     '''
-        Helpseeker priority getter - chooses a priority with replacement
+        Getter to assign helpseeker priority
     '''
 
     return random.choices(
         list(RISKLEVEL_WEIGHTS.keys()), list(RISKLEVEL_WEIGHTS.values() ) )[0]
+
+#-------------------------------------------------------------------------------
+
+def assign_repeated_user():
+    '''
+        Getter to assign repeated user status
+    '''
+
+    return random.choices(
+        list(USERTYPE_WEIGHTS.keys()), list(USERTYPE_WEIGHTS.values() ) )[0]
 
 ################################################################################
 # Classes
@@ -89,6 +103,7 @@ class Counsellor:
         self.env = env
         self.process = env.process(self.shift() )
         self.counsellor = f'Counsellor {counsellor_id}'
+
         self.service_duration = service_duration
         self.lunch_duration = lunch_duration
 
@@ -104,8 +119,14 @@ class Counsellor:
             print(f'{self.counsellor} starts shift at {self.env.now}')
             yield self.env.timeout(self.service_duration)
 
-            # get lunch break
-            yield self.env.process(self.lunch_break() )
+            # give lunch break, but throw an interrupt when the queue grows too
+            # long
+            try:
+                yield self.env.process(self.lunch_break() )
+            except simpy.Interrupt:
+
+            
+
             yield self.env.timeout(self.service_duration)
             print(f'{self.counsellor} shift ends at {self.env.now}')
 
@@ -163,7 +184,7 @@ class Helpseeker:
         '''
 
         # simulate the interarrivals between users
-        interarrival_time = get_interarrival_time(self.mean_interarrival_time)
+        interarrival_time = assign_interarrival_time(self.mean_interarrival_time)
         yield self.env.timeout(interarrival_time)
 
         self.arrival_time = self.env.now
@@ -184,7 +205,7 @@ class Helpseeker:
                 print(f'{self.user} now being served at {time_now}.  '
                     f'User spent {queue_time} in the queue.')
 
-                chat_duration = get_chat_duration(self.mean_chat_duration)
+                chat_duration = assign_chat_duration(self.mean_chat_duration)
                 yield self.env.timeout(chat_duration)
                 print(f'{self.user} chat session terminated successfully at t ='
                     f' {self.env.now}. Chat lasted {chat_duration}')
