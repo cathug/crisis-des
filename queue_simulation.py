@@ -11,127 +11,316 @@
     https://www.academia.edu/35846791/Discrete_Event_Simulation._It_s_Easy_with_SimPy_
 '''
 
-import simpy, random
+import simpy, random, enum
 # from scipy.stats import poisson
 
 
 
-
 # Globals
-NUM_HELPSEEKERS_IN_SYSTEM = 0
-NUM_HELPSEEKERS_IN_QUEUE = 0
-NUM_HELPSEEKERS_IN_PRIORITY_QUEUE = [0, 0, 0]
 SIMULATION_DURATION = 1440
 NUM_COUNSELLING_PROCESS = 16
 SEED = 728
 
+################################################################################
+# Enums and constants
+################################################################################
 
+class Shifts(enum.Enum):
+    '''
+        different types of shifts
+        shift start, end, and next shift offset in minutes
+    '''
 
+    GRAVEYARD = ('GRAVEYARD',   1290, 1890, 840, 2) # from 9:30pm to 7:30am
+    AM =        ('AM',          435, 915, 960, 2)   # from 7:15am to 3:15 pm
+    PM =        ('PM',          840, 1320, 960, 2)  # from 2pm to 10pm
+    SPECIAL =   ('SPECIAL',     1020, 1500, 960, 1) # from 5pm to 1 am
+
+    def __init__(self, shift_name, start, end, offset, capacity):
+        self.shift_name = shift_name
+        self.start = start
+        self.end = end
+        self.offset = offset
+        self.capacity = capacity
+
+    @property
+    def duration(self):
+        return self.end - self.start
+
+#-------------------------------------------------------------------------------
+
+class JobStates(enum.Enum):
+    '''
+        Counsellor in three states:
+        counselling, eating lunch, and adhoc duties,
+        each of which are given different priorities (must be integers)
+
+        The higher the priority, the lower the value 
+        (10 has higher priority than 20)
+    '''
+
+    SIGNOUT =       ('SIGNED OUT',      10)
+    COUNSELLING =   ('COUNSELLING',     20)
+    LUNCH =         ('EATING LUNCH',    20)
+    AD_HOC =        ('AD HOC DUTIES',   30)
+
+    def __init__(self, job_name, priority):
+        self.job_name = job_name
+        self.priority = priority
+
+#-------------------------------------------------------------------------------
+
+class AdHocDuty(enum.Enum):
+    '''
+        different types of shifts
+        shift start, end, and next shift offset in minutes
+    '''
+
+    MORNING =   ('MORNING', 600, 840)       # from 10am to 2 pm
+    AFTERNOON = ('AFTERNOON', 840, 1080)    # from 2pm to 6pm
+    EVENING =   ('EVENING', 1080, 1320)     # from 6pm to 10pm    
+
+    def __init__(self, period_name, start, end):
+        self.period_name = period_name
+        self.start = start
+        self.end = end
+
+    @property
+    def duration(self):
+        return self.end - self.start
+
+#-------------------------------------------------------------------------------
+
+class Risklevels(enum.Enum):
+    '''
+        Distribution of LOW/MEDIUM/HIGH/CRISIS - 82%/16%/1.5%/0.5%
+    '''
+
+    CRISIS =    ('CRISIS',  .05)
+    HIGH =      ('HIGH',    .015)
+    MEDIUM =    ('MEDIUM',  .16)
+    LOW =       ('LOW',     .82)
+
+    def __init__(self, risk, probability):
+        self.risk = risk
+        self.probability = probability
+
+#-------------------------------------------------------------------------------
+
+class Users(enum.Enum):
+    '''
+        Distribution of Repeated Users - 95% regular / 5% repeated
+    '''
+
+    REPEATED =  ('REPEATED USER',   .05) 
+    REGULAR =   ('REGULAR USER',    .95) 
+    
+    def __init__(self, user_type, probability):
+        self.user_type = user_type
+        self.probability = probability
+
+#-------------------------------------------------------------------------------
+
+class Roles(enum.Enum):
+    '''
+        Counsellor Roles
+    '''
+
+    SOCIAL_WORKER = 'social worker'
+    DUTY_OFFICER =  'duty officer'
+    VOLUNTEER =     'volunteer'
 
 ################################################################################
 # Classes
 ################################################################################
 
-class ServiceOperation:
+class Counsellor:
     '''
-        Service Operation Class to emulate counsellor availability
+        Class to emulate counselling process
     '''
 
     lunch_break = 60 # 60 minute lunch break
-    num_counsellors = 5
+    mean_chat_duration = 60 # average chat no longer than 60 minutes
 
 
-    def __init__(self, 
-                 env,
-                 counsellor_id,
-                 service_duration):
+    def __init__(self, env, counsellor_id, shift, chatroom_sessions, role):
+        '''
+            param:
+
+            env - simpy environment instance
+            counsellor_id - an assigned counsellor id (INTEGER)
+            shift - counsellor shift (one of Shifts enum)
+            chatroom_sessions - chatroom sessions FilterStore
+        '''
+
         self.env = env
-        self.process = env.process(self.handle_helpseeker() )
         self.counsellor = f'Counsellor {counsellor_id}'
+        self.chatroom_sessions = chatroom_sessions
+        self.lunch = False # whether worker had lunch
+        self.adhoc = False # whether worker had performed adhoc duties
+        self.shift = shift
+        self.shift_remaining = shift.duration
+        self.role = role
 
-        self.service_duration = service_duration
+        # start idle, counselling, adhoc jobs, lunch break, signout states
+        self.process = env.process(self.idle() )
+        env.process(self.handle_helpseeker() )
+        env.process(self.handle_adhoc_jobs() )
+        env.process(self.lunch_break() )
+        env.process(self.sign_out() )
 
     #---------------------------------------------------------------------------
     
-    def handle_helpseeker(self):
+    def idle(self):
         '''
-            helpseeker handler
+            counsellor in idle state
+            higher priority states will preempt lower priority states
         '''
 
         while True:
-            # start counselling for the first 6 hours
-            print(f'{self.counsellor} starts shift at {self.env.now}')
-            yield self.env.timeout(self.service_duration)
+            while self.shift_remaining:
+                try:
+                    # in idle state
+                    start = self.env.now
+                    yield self.env.timeout(shift_remaining)
+                    self.shift_remaining = 0
 
-            # give lunch break
-            # no interrupts thrown at first half of lunch break
-            print(f'{self.counsellor} Getting a lunch break at {self.env.now}')
-            yield self.env.process(self.half_lunch_break() )
+                # one of four processes throwing an interrupt
+                except simpy.Interrupt as interrupt:
+                    cause = interrupt.cause 
 
-            # in the second half, interrupt when the queue grows too long
-            try: 
-                yield self.env.process(self.half_lunch_break() )
-            except simpy.Interrupt:
-                print(f"Counsellor {self.counsellor}'s lunch break "
-                    "has been cut short.")
 
-            yield self.env.timeout(self.service_duration)
-            print(f'{self.counsellor} shift ends at {self.env.now}')
+                    if cause is JobStates.SIGNOUT:
+                        self.signed_out = True
 
-    
+                        print(f'{self.counsellor} shift ends at {self.env.now}')
+                        with state.request(priority=cause.priority) as state:
+                            yield state & self.env.timeout(self.shift.offset)
+
+                        print(f'{self.counsellor} shift starts at {self.env.now}')
+
+                        # reset all flags
+                        self.signed_out = False
+                        self.lunch = False
+                        self.adhoc = False
+                        self.shift_remaining = shift.duration
+
+                    
+
+                    elif cause is JobStates.AD_HOC:
+                        self.adhoc = True
+
+                        with state.request(priority=cause.priority) as state:
+                            yield state & self.env.timeout(240)
+
+
+
+                    elif cause is JobStates.LUNCH:
+                        # give lunch break
+                        self.lunch = True
+                        print(f'{self.counsellor} Requesting a lunch break at '
+                            f'{self.env.now}')
+
+                        with state.request(priority=cause.priority) as state:
+                            yield state & self.env.timeout(self.lunch_break)
+
+
+
+                    elif cause is JobStates.COUNSELLING:
+                        # remove helpseeker from queue
+                        helpseeker = yield self.chatroom_sessions.get()
+
+                        # serve helpseeker
+                        chat_duration = self.assign_chat_duration()
+                        with state.request(priority=cause.priority) as state:
+                            yield state & self.env.timeout(chat_duration)
+                        
+
+
+                        print(f'{helpseeker} chat session terminated successfully at t ='
+                            f' {self.env.now}. Chat lasted {chat_duration}') 
+                        
+
+                    # update shift_remaining
+                    self.shift_remaining -= self.env.now - start
+
     #---------------------------------------------------------------------------
 
-    def half_lunch_break(self):
-        '''
-            Give counsellors half a lunch break
-            Call this twice to give a full lunch break
-        '''
-        yield self.env.timeout(self.lunch_break // 2)
+    def handle_helpseeker(self):
+        pass
+        
+    #---------------------------------------------------------------------------
 
-#-------------------------------------------------------end of Counsellors class
+    def lunch_break(self):
+        '''
+            Give counsellors a lunch break
+        '''
+        while True:
+            if not self.lunch and self.shift_remaining < 240:
+                self.process.interrupt(JobStates.LUNCH)
+
+    #---------------------------------------------------------------------------
+
+    def handle_adhoc_jobs(self):
+        '''
+            Handle Ad Hoc Jobs once a day
+        '''
+        while True:
+            yield self.env.timeout(1440)
+            if not self.adhoc and self.shift in (Shifts.AM, Shifts.PM):
+                self.process.interrupt(JobStates.AD_HOC)                
+
+    #---------------------------------------------------------------------------
+
+    def sign_out(self):
+        '''
+            function to simulate counsellor off time while they are not at work
+        '''
+        while True:
+            yield self.env.timeout(1440)
+            if not self.signed_out:
+                self.process.interrupt(JobStates.SIGNOUT)
+
+    #---------------------------------------------------------------------------
+
+    def assign_chat_duration(self):
+        '''
+            Getter to assign chat duration
+            chat duration follows an exponential distribution
+        '''
+        lambda_chat_duration = 1.0 / self.mean_chat_duration
+        return random.expovariate(lambda_chat_duration)
+
+#--------------------------------------------------------end of Counsellor class
 
 class Helpseeker:
     '''
         Helpseeker Class to create a helpseeker
     '''
 
-    mean_chat_duration = 60 # average chat no longer than 60 minutes
     mean_interarrival_time = 7.0 # mean time between helpseekers arriving
-    risklevel_weights = {
-        'CRISIS':   .05,
-        'HIGH':     .015,
-        'MEDIUM':   .16,
-        'LOW':      .82,
-    } # Distribution of LOW/MEDIUM/HIGH/CRISIS - 82%/16%/1.5%/0.5%
-
-    usertype_weights = {
-        'REPEATED_USER': .05, 
-        'REGULAR_USER': .95, 
-    } # Distribution of Repeated Users - 95%/5%
-
     mean_renege_time = 7.0  # mean patience before reneging 
                             # specify this as a float
 
-    def __init__(self,
-                 env,
-                 helpseeker_id,
-                 counselling_process):
+    def __init__(self, env, helpseeker_id, chatroom_sessions):
 
         '''
             param:
                 env - simpy environment instance
-                helpseeker_id - an assigned helpseeker id
-                counselling_process - Openup counselling process resource
+                helpseeker_id - an assigned helpseeker id (INTEGER)
+                chatroom_sessions - chatroom sessions (FilterStore)
         '''
 
         self.env = env
         self.arrival_time = None
-        self.counselling_process = counselling_process
         self.user = f'Helpseeker {helpseeker_id}'
-        self.risklevel = self.assign_risklevel()
-        self.user_status = self.assign_user_status()
+        self.chatroom_sessions = chatroom_sessions
 
-        # start creating a chatroom session
+        # assign random helpseeker risklevels, repeated/regular status
+        self.risklevel = random.choices(list(Risklevels) ) 
+        self.user_status = random.choices(list(Users) )
+        
+        # start creating a chatroom session process
         self.process = env.process(self.session() )
 
     #---------------------------------------------------------------------------
@@ -146,31 +335,29 @@ class Helpseeker:
         yield self.env.timeout(interarrival_time)
 
         self.arrival_time = self.env.now
+
+        # request a counselling session
+        request = chatroom_sessions.put(self.user)
         print(f'{self.user} has accepted TOS.  '
-            f'Chat session created at t = {self.env.now}.')
+            f'Chat session created at t = {self.arrival_time}.')
 
+        # wait for counsellor or renege
+        patience = self.assign_renege_time()
+        results = yield request | self.env.timeout(patience)
 
-        with self.counselling_process.request() as request:
-            # wait for counsellor or renege
-            patience = self.assign_renege_time()
-            results = yield request | self.env.timeout(patience)
-            
-            if request in results:
-                # counsellor now serving helpseeker
-                time_now = self.env.now
-                queue_time = time_now - self.arrival_time
-                print(f'{self.user} now being served at {time_now}.  '
-                    f'User spent {queue_time} in the queue.')
+        if request not in results: # helpseeker reneged
+            print(f'{self.user} reneged after '
+                f'spending t = {patience} in the queue.')
 
-                chat_duration = self.assign_chat_duration()
-                yield self.env.timeout(chat_duration)
-                print(f'{self.user} chat session terminated successfully at t ='
-                    f' {self.env.now}. Chat lasted {chat_duration}')
+            # remove user from the chatroom session store
+            yield self.chatroom_sessions.get(lambda x: x==self.user)
 
-            else:
-                # helpseeker reneged
-                print(f'{self.user} reneged after '
-                    f'spending t = {patience} in the queue.')
+        else: # counsellor now serving helpseeker
+            # figure out how long user actually spent in the queue
+            time_now = self.env.now
+            queue_time = time_now - self.arrival_time
+            print(f'{self.user} now being served at {time_now}.  '
+                f'User spent {queue_time} in the queue.')
 
     #---------------------------------------------------------------------------
 
@@ -184,16 +371,6 @@ class Helpseeker:
 
     #---------------------------------------------------------------------------
 
-    def assign_chat_duration(self):
-        '''
-            Getter to assign chat duration
-            chat duration follows an exponential distribution
-        '''
-        lambda_chat_duration = 1.0 / self.mean_chat_duration
-        return random.expovariate(lambda_chat_duration)
-
-    #---------------------------------------------------------------------------
-
     def assign_renege_time(self):
         '''
             Getter to assign patience to helpseeker
@@ -203,41 +380,70 @@ class Helpseeker:
         lambda_renege = 1.0/self.mean_renege_time
         return random.expovariate(lambda_renege)
 
+#-------------------------------------------------------------------------------
+
+class ServiceOperation:
+    '''
+        Class to emulate OpenUp Service Operation with a limited number of 
+        counsellors to handle helpseeker chat requests
+
+        counsellor availability varies over time
+
+        Helpseekers have to request a counsellor to begin the counselling
+        process
+    '''
+
+    total_recruits = 0 # total number of recruits
+    for shift in list(Shifts):
+        total_recruits += shift.capacity
+
     #---------------------------------------------------------------------------
 
-    def assign_risklevel(self):
-        '''
-            Getter to assign helpseeker risklevel
-        '''
-
-        return random.choices(list(self.risklevel_weights.keys() ), 
-            list(self.risklevel_weights.values() ) )[0]
+    def __init__(self, env, shift):
+        self.env = env
+        self.counsellors_active = simpy.FilterStore(env)
+        
+        # preset counsellor store
+        self.start_shift(shift)
 
     #---------------------------------------------------------------------------
 
-    def assign_user_status(self):
+    def start_shift(self, shift, chatroom_sessions):
         '''
-            Getter to assign repeated user status
+            function to put counsellors 
+            into the store at the start of the shift
         '''
-        return random.choices(list(self.usertype_weights.keys() ), 
-            list(self.usertype_weights.values() ) )[0]
+
+        for i in range(shift.capacity+1):
+            counsellor = self.env.process(
+                Counsellor(self.env, i, shift_duration, chatroom_sessions, role)
+            )
+            self.counsellors_active.put(counsellor)
+
+    #---------------------------------------------------------------------------
+
+    def end_shift(self, shift):
+        '''
+            function to remove all counsellors 
+            from the store at the end of shift
+        '''
+        for i in range(shift.capacity+1):
+            self.counsellors_active.get(lambda x: x.shift is shift)
 
 ################################################################################
 # Main Function
 ################################################################################
 
 def main():
-    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
     print('Initializing OpenUp Queue Simulation')
-    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n')
+    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+
     random.seed(SEED) # comment out line if not reproducing results
 
     # create environment
-    env = simpy.Environment()
-    # counsellor = Counsellor(env, 1, 8, 1)
+    env = simpy.Environment()  
     
-    counselling_process = simpy.Resource(env, capacity=NUM_COUNSELLING_PROCESS)
-
     helpseekers = []
     start_time = env.now
     duration = 0
@@ -245,7 +451,7 @@ def main():
 
     # create helpseekers
     for i in range(1, 120):
-        helpseekers.append(Helpseeker(env, i, counselling_process) )
+        helpseekers.append(Helpseeker(env, i, openup_counselling) )
 
     print(f'Total number of helpseekers created: {len(helpseekers)}\n\n')
 
