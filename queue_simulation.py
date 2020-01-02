@@ -12,6 +12,7 @@
 '''
 
 import simpy, random, enum
+from simpy.util import start_delayed
 # from scipy.stats import poisson
 
 
@@ -31,22 +32,26 @@ class Shifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   1290, 1890, 840, 2) # from 9:30pm to 7:30am
-    AM =        ('AM',          435, 915, 960, 2)   # from 7:15am to 3:15 pm
-    PM =        ('PM',          840, 1320, 960, 2)  # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     1020, 1500, 960, 1) # from 5pm to 1 am
+    GRAVEYARD = ('GRAVEYARD',   1290, 1890, 2) # from 9:30pm to 7:30am
+    AM =        ('AM',          435, 915, 2)   # from 7:15am to 3:15 pm
+    PM =        ('PM',          840, 1320, 2)  # from 2pm to 10pm
+    SPECIAL =   ('SPECIAL',     1020, 1500, 1) # from 5pm to 1 am
 
-    def __init__(self, shift_name, start, end, offset, capacity):
+    def __init__(self, shift_name, start, end, capacity):
         self.shift_name = shift_name
         self.start = start
         self.end = end
-        self.offset = offset
         self.capacity = capacity
 
     @property
     def duration(self):
         return self.end - self.start
 
+    @property
+    def lunch_start(self):
+        # define lunch as the midpoint of shift
+        return self.start + (self.end - self.start) / 2
+        
 #-------------------------------------------------------------------------------
 
 class JobStates(enum.Enum):
@@ -76,7 +81,7 @@ class AdHocDuty(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    MORNING =   ('MORNING', 600, 840)       # from 10am to 2 pm
+    MORNING =   ('MORNING', 600, 840)       # from 10am to 2pm
     AFTERNOON = ('AFTERNOON', 840, 1080)    # from 2pm to 6pm
     EVENING =   ('EVENING', 1080, 1320)     # from 6pm to 10pm    
 
@@ -96,7 +101,7 @@ class Risklevels(enum.Enum):
         Distribution of LOW/MEDIUM/HIGH/CRISIS - 82%/16%/1.5%/0.5%
     '''
 
-    CRISIS =    ('CRISIS',  .05)
+    CRISIS =    ('CRISIS',  .005)
     HIGH =      ('HIGH',    .015)
     MEDIUM =    ('MEDIUM',  .16)
     LOW =       ('LOW',     .82)
@@ -141,15 +146,22 @@ class Counsellor:
 
     lunch_break = 60 # 60 minute lunch break
     mean_chat_duration = 60 # average chat no longer than 60 minutes
+    day_in_minutes = 24 * 60 # 1440 minutes 
 
-
-    def __init__(self, env, counsellor_id, shift, chatroom_sessions, role):
+    def __init__(self,
+                 env, 
+                 counsellor_id,
+                 shift,
+                 adhoc_duty,
+                 chatroom_sessions,
+                 role):
         '''
             param:
 
             env - simpy environment instance
             counsellor_id - an assigned counsellor id (INTEGER)
             shift - counsellor shift (one of Shifts enum)
+            adhoc_duty - an ad hoc duty enum corresponding to shift
             chatroom_sessions - chatroom sessions FilterStore
         '''
 
@@ -157,7 +169,10 @@ class Counsellor:
         self.counsellor = f'Counsellor {counsellor_id}'
         self.chatroom_sessions = chatroom_sessions
         self.lunch = False # whether worker had lunch
-        self.adhoc = False # whether worker had performed adhoc duties
+
+        self.adhoc_completed = False # whether worker had completed adhoc duty time slice
+        self.adhoc = adhoc
+        
         self.shift = shift
         self.shift_remaining = shift.duration
         self.role = role
@@ -195,23 +210,23 @@ class Counsellor:
 
                         print(f'{self.counsellor} shift ends at {self.env.now}')
                         with state.request(priority=cause.priority) as state:
-                            yield state & self.env.timeout(self.shift.offset)
+                            yield state & self.env.timeout(self.shift.duration)
 
                         print(f'{self.counsellor} shift starts at {self.env.now}')
 
                         # reset all flags
                         self.signed_out = False
                         self.lunch = False
-                        self.adhoc = False
+                        self.adhoc_completed = False
                         self.shift_remaining = shift.duration
 
                     
 
                     elif cause is JobStates.AD_HOC:
-                        self.adhoc = True
+                        self.adhoc_completed = True
 
                         with state.request(priority=cause.priority) as state:
-                            yield state & self.env.timeout(240)
+                            yield state & self.env.timeout(self.adhoc.duration)
 
 
 
@@ -235,10 +250,9 @@ class Counsellor:
                         with state.request(priority=cause.priority) as state:
                             yield state & self.env.timeout(chat_duration)
                         
-
-
-                        print(f'{helpseeker} chat session terminated successfully at t ='
-                            f' {self.env.now}. Chat lasted {chat_duration}') 
+                            print(f'{helpseeker} '
+                                f'chat session terminated successfully at t ='
+                                f' {self.env.now}. Chat lasted {chat_duration}') 
                         
 
                     # update shift_remaining
@@ -247,6 +261,9 @@ class Counsellor:
     #---------------------------------------------------------------------------
 
     def handle_helpseeker(self):
+        '''
+            Handle to deal with helpseeker processes
+        '''
         pass
         
     #---------------------------------------------------------------------------
@@ -255,32 +272,73 @@ class Counsellor:
         '''
             Give counsellors a lunch break
         '''
-        while True:
+
+        def delay_interrupt(delay):
+            '''
+                handle to schedule timeout and send an interrupt
+                after a certain delay
+            '''
+            yield self.env.timeout(delay)
             if not self.lunch and self.shift_remaining < 240:
                 self.process.interrupt(JobStates.LUNCH)
+
+
+        # routine starts here
+        delay_interrupt(self.shift.lunch_start % self.day_in_minutes) # edge case
+        while True:
+            # call every 24 hours
+            delay_interrupt(self.day_in_minutes)
 
     #---------------------------------------------------------------------------
 
     def handle_adhoc_jobs(self):
         '''
-            Handle Ad Hoc Jobs once a day
+            Handle to schedule Ad Hoc Jobs
+            Jobs will be handled within given time range
         '''
+
+        def delay_interrupt(delay):
+            '''
+                handle to schedule an interrupt after a certain delay
+
+                param: delay - delay (Integer or float)
+            '''
+            self.env.timeout(delay)
+            if not self.adhoc_completed and self.shift in (Shifts.AM, Shifts.PM):
+                self.process.interrupt(JobStates.AD_HOC)
+
+
+        # routine starts here
+        delay_interrupt(self.adhoc.start) # edge case
         while True:
-            yield self.env.timeout(1440)
-            if not self.adhoc and self.shift in (Shifts.AM, Shifts.PM):
-                self.process.interrupt(JobStates.AD_HOC)                
+            # call every 24 hours
+            delay_interrupt(self.day_in_minutes)
 
     #---------------------------------------------------------------------------
 
     def sign_out(self):
         '''
-            function to simulate counsellor off time while they are not at work
+            function to schedule counsellor off time
         '''
-        while True:
-            yield self.env.timeout(1440)
-            if not self.signed_out:
-                self.process.interrupt(JobStates.SIGNOUT)
 
+        def delay_interrupt(delay):
+            '''
+                handle to schedule timeout and send an interrupt
+                after a certain delay
+
+                param: delay - delay (Integer or float)
+            '''
+            yield self.env.timeout(delay)
+            if not self.signed_out:
+                self.process.interrupt(JobStates.SIGNOUT)    
+
+
+        # routine starts here
+        delay_interrupt(self.shift.start % self.day_in_minutes) # 
+        while True:
+            # call every 24 hours
+            delay_interrupt(self.day_in_minutes)
+            
     #---------------------------------------------------------------------------
 
     def assign_chat_duration(self):
@@ -410,8 +468,8 @@ class ServiceOperation:
 
     def start_shift(self, shift, chatroom_sessions):
         '''
-            function to put counsellors 
-            into the store at the start of the shift
+            function to put counsellors from a shift
+            into the store when shift begins
         '''
 
         for i in range(shift.capacity+1):
@@ -424,8 +482,8 @@ class ServiceOperation:
 
     def end_shift(self, shift):
         '''
-            function to remove all counsellors 
-            from the store at the end of shift
+            function to remove counsellors from a shift 
+            from the store when shift ends
         '''
         for i in range(shift.capacity+1):
             self.counsellors_active.get(lambda x: x.shift is shift)
