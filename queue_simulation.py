@@ -264,7 +264,21 @@ class Counsellor:
         '''
             Handle to deal with helpseeker processes
         '''
-        pass
+        while True:
+            interarrival_time = self.assign_interarrival_time()
+            yield self.env.timeout(interarrival_time)
+
+            self.arrival_time = self.env.now
+
+
+            # request a counselling session
+            request = chatroom_sessions.put(self.user)
+            print(f'{self.user} has accepted TOS.  '
+                f'Chat session created at t = {self.arrival_time}.')
+
+            # wait for counsellor or renege
+            patience = self.assign_renege_time()
+            results = yield request | self.env.timeout(patience)
         
     #---------------------------------------------------------------------------
 
@@ -334,7 +348,7 @@ class Counsellor:
 
 
         # routine starts here
-        delay_interrupt(self.shift.start % self.day_in_minutes) # 
+        delay_interrupt(self.shift.start % self.day_in_minutes) # edge case
         while True:
             # call every 24 hours
             delay_interrupt(self.day_in_minutes)
