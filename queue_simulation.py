@@ -52,10 +52,10 @@ class Shifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   1290, 1890, 840, 2) # from 9:30pm to 7:30am
-    AM =        ('AM',          435, 915, 960,  2)   # from 7:15am to 3:15 pm
-    PM =        ('PM',          840, 1320, 960, 2)  # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     1020, 1500, 960, 1) # from 5pm to 1 am
+    GRAVEYARD = ('GRAVEYARD',   1290, 1890, 840, 3)#2) # from 9:30pm to 7:30am
+    AM =        ('AM',          435, 915, 960, 3) #2)   # from 7:15am to 3:15 pm
+    PM =        ('PM',          840, 1320, 960, 3)#2)  # from 2pm to 10pm
+    SPECIAL =   ('SPECIAL',     1020, 1500, 960, 2)#1) # from 5pm to 1 am
 
     def __init__(self, shift_name, start, end, offset, capacity):
         self.shift_name = shift_name
@@ -152,9 +152,13 @@ class Roles(enum.Enum):
         Counsellor Roles
     '''
 
-    SOCIAL_WORKER = 'social worker'
-    DUTY_OFFICER =  'duty officer'
-    VOLUNTEER =     'volunteer'
+    SOCIAL_WORKER = ('SOCIAL WORKER',   4)
+    DUTY_OFFICER =  ('DUTY OFFICER',    2)
+    VOLUNTEER =     ('VOLUNTEER',       1)
+
+    def __init__(self, counsellor_type, num_processes):
+        self.counsellor_type = counsellor_type
+        self.num_processes = num_processes
 
 #-------------------------------------------------------------------------------
 
@@ -312,8 +316,17 @@ class ServiceOperation:
         total_recruits += shift.capacity
 
 
-    # mean times for random draws (type FLOAT)
-    mean_interarrival_time = 7.0 # mean time between helpseekers arriving
+    # mean times for random draws (type FLOATS or LIST of FLOATs)
+    mean_interarrival_time = [
+        7.42, 9.11, 16.39, 22.21, 
+        31.19, 44.78, 77.83, 43.73,
+        28.71, 26.65, 29.02, 22.29,
+        15.89, 16.02, 12.50, 13.47,
+        14.58, 12.92, 9.97, 8.95,
+        7.09, 9.00, 7.04, 7.05] # mean time vector, size = 24
+                                # each entry is associated with helpseekers 
+                                # interarrivals at different hours in a day
+    
     mean_renege_time = 7.0  # mean patience before reneging
     mean_chat_duration = 60.0 # average chat no longer than 60 minutes
     
@@ -521,16 +534,24 @@ class ServiceOperation:
                     self.served_g_repeated += 1
                 else:
                     self.served_g_regular += 1
+
     ############################################################################
     # Predefined Distribution Getters
     ############################################################################
 
     def assign_interarrival_time(self):
         '''
-            Getter to assign interarrival time
+            Getter to assign interarrival time by the current time interval
             interarrival time follows an exponential distribution
         '''
-        lambda_interarrival = 1.0 / self.mean_interarrival_time
+        
+        # cast this as integer to get a rough estimate
+        # calculate the nearest hour as an integer
+        # use it to access the mean interarrival time, from which the lambda
+        # can be calculated
+        current_day_minutes = int(self.env.now) % MINUTES_PER_DAY
+        nearest_hour = int(current_day_minutes / MINUTES_PER_DAY)
+        lambda_interarrival = 1.0 / self.mean_interarrival_time[nearest_hour]
         return random.expovariate(lambda_interarrival)
 
     #---------------------------------------------------------------------------
@@ -539,7 +560,6 @@ class ServiceOperation:
         '''
             Getter to assign patience to helpseeker
             helpseeker patience follows an exponential distribution
-
         '''
         lambda_renege = 1.0 / self.mean_renege_time
         return random.expovariate(lambda_renege)
@@ -587,7 +607,7 @@ def main():
     print('Initializing OpenUp Queue Simulation')
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
-    random.seed(SEED) # comment out line if not reproducing results
+    # random.seed(SEED) # comment out line if not reproducing results
 
     # create environment
     env = simpy.Environment() 
@@ -595,7 +615,7 @@ def main():
     # set up service operation and run simulation until  
     S = ServiceOperation(env=env)
     env.run(until=SIMULATION_DURATION)
-    print(S.assign_risklevel() )
+    # print(S.assign_risklevel() )
 
     print('\n\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
     print('Final Results')
