@@ -11,7 +11,7 @@
     https://www.academia.edu/35846791/Discrete_Event_Simulation._It_s_Easy_with_SimPy_
 '''
 
-import simpy, random, enum
+import simpy, random, enum, itertools
 from simpy.util import start_delayed
 from pprint import pprint
 # from scipy.stats import poisson
@@ -324,7 +324,7 @@ class ServiceOperation:
         15.89, 16.02, 12.50, 13.47,
         14.58, 12.92, 9.97, 8.95,
         7.09, 9.00, 7.04, 7.05] # mean time vector, size = 24
-                                # each entry is associated with helpseekers 
+                                # each entry is associated with helpseeker 
                                 # interarrivals at different hours in a day
     
     mean_renege_time = 7.0  # mean patience before reneging
@@ -341,7 +341,7 @@ class ServiceOperation:
         self.env = env
 
         # counters
-        self.helpseeker_id = 0 # to be changed in create_helpseekers()
+        self.num_helpseekers = 0 # to be changed in create_helpseekers()
         self.reneged = 0
         self.served = 0
         self.reneged_g_repeated = 0
@@ -367,7 +367,7 @@ class ServiceOperation:
         # generate helpseekers
         # this process will not be disrupted even when counsellors sign out
         self.helpseeker_procs = self.env.process(self.create_helpseekers() )
-        print(self.helpseeker_procs)
+        # print(self.helpseeker_procs)
 
     ############################################################################
     # counsellor related functions
@@ -445,51 +445,39 @@ class ServiceOperation:
             function to generate helpseekers in the background
             by interarrival_time to mimic helpseeker interarrivals
         '''
-        self.helpseeker_id = 1
-        while True:
-            renege_time = self.assign_renege_time()
-            chat_duration = self.assign_chat_duration()
-            risklevel = self.assign_risklevel()
-            user_status = self.assign_user_status()
 
-            helpseeker_process = self.handle_helpseeker(
-                self.helpseeker_id, 
-                renege_time, 
-                chat_duration,
-                risklevel,
-                user_status
-            )
-            self.env.process(helpseeker_process)
-            print(f'{Colors.HGREEN}Helpseeker {self.helpseeker_id}-{risklevel}-{user_status} just entered chatroom at {self.env.now}{Colors.HEND}\n')
-
+        for i in itertools.count(1): # use this instead of while loop 
+                                     # for efficient looping
             
+
+            self.env.process(self.handle_helpseeker(i) )
+            self.num_helpseekers += 1 # increment counter
+
+            # space out incoming helpseekers
             interarrival_time = self.assign_interarrival_time()
             yield self.env.timeout(interarrival_time)
 
-            self.helpseeker_id += 1
 
-    #-------------------------------------------------------------------------------
+    #---------------------------------------------------------------------------
 
-    def handle_helpseeker(self, 
-        helpseeker_id, 
-        renege_time, 
-        chat_duration,
-        risklevel,
-        helpseeker_status):
+    def handle_helpseeker(self, helpseeker_id):
 
         '''
             helpseeker process handler
 
             param:
                 helpseeker_id - helpseeker id
-                renege_time - renege time
-                chat_duration - chat duration
-                risklevel - risk level (one of enum Risklevel)
-                helpseeker_status - helpseeker status (one of enum Users)
         '''
-        print(f'Helpseeker {helpseeker_id} has accepted TOS.  '
-            f'Chat session created at t = {self.env.now}.')
 
+        renege_time = self.assign_renege_time()
+        chat_duration = self.assign_chat_duration()
+        risklevel = self.assign_risklevel()
+        helpseeker_status = self.assign_user_status()
+
+        print(f'{Colors.HGREEN}Helpseeker '
+                f'{helpseeker_id}-{risklevel}-{helpseeker_status} '
+                f'has just accepted TOS.  Chat session created at '
+                f'{self.env.now}{Colors.HEND}\n')
 
         # wait for a counsellor or renege
         # with self.store_counsellors_active.get(
@@ -525,7 +513,7 @@ class ServiceOperation:
                 print('Releasing Counsellor Resource')
                 print('*****************************\n')
 
-                yield self.store_counsellors_active.put(counsellor)
+                self.store_counsellors_active.put(counsellor)
                 print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
                     f'{chat_duration} minutes.\nCounsellor {counsellor} is now available.{Colors.HEND}')
 
@@ -607,7 +595,7 @@ def main():
     print('Initializing OpenUp Queue Simulation')
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
-    # random.seed(SEED) # comment out line if not reproducing results
+    random.seed(SEED) # comment out line if not reproducing results
 
     # create environment
     env = simpy.Environment() 
@@ -620,15 +608,15 @@ def main():
     print('\n\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
     print('Final Results')
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-    print(f'Total number of Helpseekers visited OpenUp: {S.helpseeker_id}\n')
+    print(f'Total number of Helpseekers visited OpenUp: {S.num_helpseekers}\n')
 
     print(f'Total number of Helpseekers served: {S.served}')
-    print(f'Total number of Helpseekers served given repeated user: {S.served_g_repeated}')
-    print(f'Total number of Helpseekers served given regular user: {S.served_g_regular}\n')
+    print(f'Total number of Helpseekers served -- repeated user: {S.served_g_repeated}')
+    print(f'Total number of Helpseekers served -- user: {S.served_g_regular}\n')
 
     print(f'Total number of Helpseekers reneged: {S.reneged}')
-    print(f'Total number of Helpseekers reneged given repeated user: {S.reneged_g_repeated}')
-    print(f'Total number of Helpseekers reneged given regular user: {S.reneged_g_regular}')
+    print(f'Total number of Helpseekers reneged -- repeated user: {S.reneged_g_repeated}')
+    print(f'Total number of Helpseekers reneged -- user: {S.reneged_g_regular}')
 
 
 if __name__ == '__main__':
