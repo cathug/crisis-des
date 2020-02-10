@@ -17,11 +17,16 @@ from pprint import pprint
 # from scipy.stats import poisson
 
 
+INTERARRIVALS_FILE = '/home/plbchiang/csrp/openup-analysis/interarrivals_day_of_week_hour.csv'
+
 
 # Globals
-MAX_NUM_SIMULTANEOUS_CHATS = 2              # maximum number of simultaneous chats allowed
+QUEUE_THRESHOLD = 5                         # memoize data if queue is >= threshold 
+DAYS_IN_WEEK = 7                            # 7 days in a week
+MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
+MAX_NUM_SIMULTANEOUS_CHATS = 1              # maximum number of simultaneous chats allowed
 SEED = 728                                  # for seeding the sudo-random generator
-MINUTES_PER_DAY = 24 * 60                   # 1440 minutes per day
+MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
 SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes 
                                             # per day * num days in month
 
@@ -52,9 +57,9 @@ class Shifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 1)#2) # from 9:30pm to 7:30am
-    AM =        ('AM',          False, 435, 915, 960, 1) #2)   # from 7:15am to 3:15 pm
-    PM =        ('PM',          False, 840, 1320, 960, 1)#2)  # from 2pm to 10pm
+    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 2)#2) # from 9:30pm to 7:30am
+    AM =        ('AM',          False, 435, 915, 960, 2) #2)   # from 7:15am to 3:15 pm
+    PM =        ('PM',          False, 840, 1320, 960, 2)#2)  # from 2pm to 10pm
     SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 1)#1) # from 5pm to 1 am
 
     def __init__(self, shift_name, is_edge_case, start, end, offset, capacity):
@@ -318,11 +323,11 @@ class ServiceOperation:
 
 
     # mean times for random draws (type FLOATS or LIST of FLOATs)
-    __mean_interarrival_time = [6.159314, 7.835689, 10.193088, 14.868265, 
-        17.56785, 25.164313, 28.825652, 23.254639, 24.467604, 21.350428, 
-        15.200464, 15.548507, 11.757778, 12.807021, 11.236349, 10.274989,
-        9.907474, 8.657091, 6.997997, 7.13911, 7.565797, 7.145651, 6.074971, 
-        5.925648] # mean time vector, size = 24
+    # __mean_interarrival_time = [6.159314, 7.835689, 10.193088, 14.868265, 
+    #     17.56785, 25.164313, 28.825652, 23.254639, 24.467604, 21.350428, 
+    #     15.200464, 15.548507, 11.757778, 12.807021, 11.236349, 10.274989,
+    #     9.907474, 8.657091, 6.997997, 7.13911, 7.565797, 7.145651, 6.074971, 
+    #     5.925648] # mean time vector, size = 24
                   # each entry is associated with helpseeker 
                   # interarrivals at different hours in a day
 
@@ -347,6 +352,10 @@ class ServiceOperation:
         '''
         self.env = env
 
+        # set interarrivals (a circular array of interarrival times)
+        self.__mean_interarrival_time = self.read_interarrivals_csv()
+        # print(self.__mean_interarrival_time)
+
         # counters and flags (also see properties section)
         self.num_helpseekers = 0 # to be changed in create_helpseekers()
         self.reneged = 0
@@ -358,6 +367,7 @@ class ServiceOperation:
  
         self.helpseeker_in_system = []
         self.helpseeker_queue = []
+        self.times_queue_exceeded_five_helpseekers = []
 
         self.helpseeker_queue_max_length = 0
 
@@ -475,7 +485,7 @@ class ServiceOperation:
                 )
 
 
-        print(f'create_counsellors shift:{shift.shift_name}\n{self.counsellors[shift]}\n\n')
+        # print(f'create_counsellors shift:{shift.shift_name}\n{self.counsellors[shift]}\n\n')
 
     #---------------------------------------------------------------------------
 
@@ -494,15 +504,15 @@ class ServiceOperation:
 
         while True:
             for counsellor in self.counsellors[shift]:
-                print(f'\n{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
-                print(f'{Colors.GREEN}Counsellor {counsellor} signed in at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
+                # print(f'\n{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
+                # print(f'{Colors.GREEN}Counsellor {counsellor} signed in at t = {self.env.now}{Colors.WHITE}')
+                # print(f'{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
 
                 yield self.store_counsellors_active.put(counsellor)
 
-            print(f'Signing in shift:{shift.shift_name}  at {self.env.now}.  Active SO counsellors:')
+            # print(f'Signing in shift:{shift.shift_name}  at {self.env.now}.  Active SO counsellors:')
             # pprint(self.store_counsellors_active.items)
-            print()
+            # print()
 
             if counsellor_init and shift.is_edge_case:
                 yield self.env.timeout(shift.start)
@@ -529,13 +539,13 @@ class ServiceOperation:
             for _ in range(shift.capacity * MAX_NUM_SIMULTANEOUS_CHATS):
                 counsellor = yield self.store_counsellors_active.get()
                     # lambda x: x.shift is shift)
-                print(f'\n{Colors.RED}-----------------------------------------------------------{Colors.WHITE}')
-                print(f'{Colors.RED}Counsellor {counsellor} signed out at t = {self.env.now}{Colors.WHITE}')
-                # print(f'{Colors.RED}Counsellor {counsellor} signed out at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.RED}-----------------------------------------------------------{Colors.WHITE}\n')
-            print(f'Signing out shift:{shift.shift_name} at {self.env.now}.  Active SO counsellors:\n')
-            pprint(self.store_counsellors_active.items)
-            print()
+            #     print(f'\n{Colors.RED}-----------------------------------------------------------{Colors.WHITE}')
+            #     print(f'{Colors.RED}Counsellor {counsellor} signed out at t = {self.env.now}{Colors.WHITE}')
+            #     # print(f'{Colors.RED}Counsellor {counsellor} signed out at t = {self.env.now}{Colors.WHITE}')
+            #     print(f'{Colors.RED}-----------------------------------------------------------{Colors.WHITE}\n')
+            # print(f'Signing out shift:{shift.shift_name} at {self.env.now}.  Active SO counsellors:\n')
+            # pprint(self.store_counsellors_active.items)
+            # print()
 
             # repeat every 24 hours
             yield self.env.timeout(MINUTES_PER_DAY)
@@ -576,10 +586,10 @@ class ServiceOperation:
         risklevel = self.assign_risklevel()
         helpseeker_status = self.assign_user_status()
 
-        print(f'{Colors.HGREEN}Helpseeker '
-                f'{helpseeker_id}-{risklevel}-{helpseeker_status} '
-                f'has just accepted TOS.  Chat session created at '
-                f'{self.env.now}{Colors.HEND}\n')
+        # print(f'{Colors.HGREEN}Helpseeker '
+        #         f'{helpseeker_id}-{risklevel}-{helpseeker_status} '
+        #         f'has just accepted TOS.  Chat session created at '
+        #         f'{self.env.now}{Colors.HEND}\n')
 
         self.helpseeker_in_system.append(helpseeker_id)
         self.helpseeker_queue.append(helpseeker_id)
@@ -587,7 +597,19 @@ class ServiceOperation:
         current_helpseeker_queue_length = len(self.helpseeker_queue)
         if current_helpseeker_queue_length > self.helpseeker_queue_max_length:
             self.helpseeker_queue_max_length = current_helpseeker_queue_length
-        print(f'Helpseeker Queue: {self.helpseeker_queue}\n\n\n')
+            if current_helpseeker_queue_length >= QUEUE_THRESHOLD:
+                # print('here')
+                current_time = self.env.now
+                current_day_minutes = int(current_time) % MINUTES_PER_DAY
+                # print(f'weekday: {int(current_time / MINUTES_PER_DAY)} - hour: {int(current_day_minutes / 60)}')
+
+                self.times_queue_exceeded_five_helpseekers.append(
+                    (f'weekday:{int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK}',
+                    f'hour:{int(current_day_minutes / MINUTES_PER_HOUR)}')
+                )
+
+        # print(f'Updated max queue length to {self.helpseeker_queue_max_length}.\n'
+        #     f'Helpseeker Queue: {self.helpseeker_queue}\n\n\n')
         
         # wait for a counsellor or renege
         # with self.store_counsellors_active.get(
@@ -601,12 +623,20 @@ class ServiceOperation:
             results = yield counsellor | self.env.timeout(renege_time)
             # print(f'Results: {results}')
             # print(f'counsellor: {counsellor.resource}')
-            self.helpseeker_queue.remove(helpseeker_id)
-            print(f'Helpseeker Queue: {self.helpseeker_queue}')
 
+            # dequeue helpseeker in the waiting queue
+            self.helpseeker_queue.remove(helpseeker_id)
+            # print(f'Helpseeker Queue: {self.helpseeker_queue}')
+
+
+        
             if counsellor not in results: # if helpseeker reneged
-                print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
-                    f'spending t = {renege_time} minutes in the queue.{Colors.HEND}')
+                # remove helpseeker from system record
+                self.helpseeker_in_system.remove(helpseeker_id)
+                # print(f'Helpseeker in system: {self.helpseeker_in_system}')
+
+                # print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
+                #     f'spending t = {renege_time} minutes in the queue.{Colors.HEND}')
                 self.reneged += 1 # update counter
                 if helpseeker_status is Users.REPEATED:
                     self.reneged_g_repeated += 1
@@ -614,23 +644,29 @@ class ServiceOperation:
                     self.reneged_g_regular += 1
                 # context manager will automatically cancel counsellor request
 
+
+
             else: # if counsellor takes in a helpseeker
-                print(f'Helpseeker {helpseeker_id} is assigned to '
-                    f'{counsellor} at {self.env.now}')
+                # print(f'Helpseeker {helpseeker_id} is assigned to '
+                #     f'{counsellor} at {self.env.now}')
 
                 yield self.env.timeout(chat_duration)
 
                 # put the counsellor back into the store, so it will be available
                 # to the next helpseeker
-                print('\n*****************************')
-                print('Releasing Counsellor Resource')
-                print('*****************************\n')
+                # print('\n*****************************')
+                # print('Releasing Counsellor Resource')
+                # print('*****************************\n')
 
                 # counsellor_id = counsellor.counsellor_id
                 # shift = counsellor.shift
                 # print(counsellor.__enter__)
-                print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
-                    f'{chat_duration} minutes.\nCounsellor {counsellor} is now available.{Colors.HEND}')
+                # print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
+                #     f'{chat_duration} minutes.\nCounsellor {counsellor} is now available.{Colors.HEND}')
+
+                # remove helpseeker from system record
+                self.helpseeker_in_system.remove(helpseeker_id)
+                # print(f'Helpseeker in system: {self.helpseeker_in_system}')
 
                 # fill out counsellor postchat survey
                 yield self.env.timeout(self.__counsellor_postchat_survey)
@@ -642,9 +678,6 @@ class ServiceOperation:
                     self.served_g_repeated += 1
                 else:
                     self.served_g_regular += 1
-
-        self.helpseeker_in_system.remove(helpseeker_id)
-        print(f'Helpseeker in system: {self.helpseeker_in_system}')
 
     ############################################################################
     # Predefined Distribution Getters
@@ -660,9 +693,29 @@ class ServiceOperation:
         # calculate the nearest hour as an integer
         # use it to access the mean interarrival time, from which the lambda
         # can be calculated
-        current_day_minutes = int(self.env.now) % MINUTES_PER_DAY
-        nearest_hour = int(current_day_minutes / MINUTES_PER_DAY)
-        lambda_interarrival = 1.0 / self.__mean_interarrival_time[nearest_hour]
+
+        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        # print('INTERARRIVALS')
+        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+
+        current_time = int(self.env.now)
+        # print(f'Current time: {current_time}')
+
+        current_weekday = int(current_time / MINUTES_PER_DAY)
+        # print(f'Current weekday: {current_weekday}')
+
+
+        current_day_minutes = current_time % MINUTES_PER_DAY
+        # print(f'Current Minutes day: {current_day_minutes}')
+        nearest_hour = int(current_day_minutes / 60)
+        # print(f'Nearest hour: {nearest_hour}')
+        
+        # get the index
+        idx = int(24*current_weekday + nearest_hour) % \
+            len(self.__mean_interarrival_time)
+        # print(f'index: {idx}')
+
+        lambda_interarrival = 1.0 / self.__mean_interarrival_time[idx]
         # return random.gammavariate(50, lambda_interarrival)
         return random.expovariate(lambda_interarrival)
 
@@ -684,8 +737,8 @@ class ServiceOperation:
             chat duration follows the gamma distribution (exponential if a=1)
         '''
         lambda_chat_duration = 1.0 / self.__mean_chat_duration
-        # return random.expovariate(lambda_chat_duration)
-        return random.gammavariate(2, lambda_chat_duration)
+        return random.expovariate(lambda_chat_duration)
+        # return random.gammavariate(2, lambda_chat_duration)
 
     #---------------------------------------------------------------------------
 
@@ -709,6 +762,23 @@ class ServiceOperation:
 
         return random.choices(options, probability)[0]
 
+    #---------------------------------------------------------------------------
+
+    def read_interarrivals_csv(self):
+        '''
+            file input function to read in interarrivals data
+            by the day, starting from Sunday 0h, ending at Saturday 23h      
+        '''
+        try:
+            with open(INTERARRIVALS_FILE, 'r') as f:
+                weekday_hours = [float(i.split(',')[-1][:-1])
+                    for i in f.readlines()[1:] ]
+
+            return weekday_hours
+
+        except Exception as e:
+            print('Unable to read interarrivals file.')
+
 #--------------------------------------------------end of ServiceOperation class
 
 ################################################################################
@@ -721,30 +791,49 @@ def main():
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
     random.seed(SEED) # comment out line if not reproducing results
+    queue_exceeded = []
+    max_queue_length = []
+    num_helpseekers = []
+    num_helpseekers_served = []
+    num_helpseekers_served_g_regular = []
+    num_helpseekers_served_g_repeated = []
+    num_helpseekers_reneged = []
+    num_helpseekers_reneged_g_regular = []
+    num_helpseekers_reneged_g_repeated = []
 
-    # create environment
-    env = simpy.Environment() 
+    
+    for i in range(1, 10):
+        # create environment
+        env = simpy.Environment() 
 
-    # set up service operation and run simulation until  
-    S = ServiceOperation(env=env)
-    env.run(until=SIMULATION_DURATION)
-    # print(S.assign_risklevel() )
+        # set up service operation and run simulation until  
+        S = ServiceOperation(env=env)
+        env.run(until=SIMULATION_DURATION)
+        # print(S.assign_risklevel() )
 
-    print('\n\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-    print(f'Final Results -- number of simultaneous chats: {MAX_NUM_SIMULTANEOUS_CHATS}')
-    print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-    print(f'Total number of Helpseekers visited OpenUp: {S.num_helpseekers}\n')
+        # print('\n\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        # print(f'Iteration #{i} ')
+        # print(f'Final Results -- number of simultaneous chats: {MAX_NUM_SIMULTANEOUS_CHATS}')
+        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        # print(f'Total number of Helpseekers visited OpenUp: {S.num_helpseekers}\n')
 
-    print(f'Total number of Helpseekers served: {S.served}')
-    print(f'Total number of Helpseekers served -- repeated user: {S.served_g_repeated}')
-    print(f'Total number of Helpseekers served -- user: {S.served_g_regular}\n')
+        # percent_served = S.served/S.num_helpseekers * 100
+        # print(f'Total number of Helpseekers served: {S.served} ({percent_served:.02f}%)')
+        # print(f'Total number of Helpseekers served -- repeated user: {S.served_g_repeated}')
+        # print(f'Total number of Helpseekers served -- user: {S.served_g_regular}\n')
 
-    print(f'Total number of Helpseekers reneged: {S.reneged}')
-    print(f'Total number of Helpseekers reneged -- repeated user: {S.reneged_g_repeated}')
-    print(f'Total number of Helpseekers reneged -- user: {S.reneged_g_regular}\n')
+        # percent_reneged = S.reneged/S.num_helpseekers * 100
+        # print(f'Total number of Helpseekers reneged: {S.reneged} ({percent_reneged:.02f}%)')
+        # print(f'Total number of Helpseekers reneged -- repeated user: {S.reneged_g_repeated}')
+        # print(f'Total number of Helpseekers reneged -- user: {S.reneged_g_regular}\n')
 
-    print(f'Maximum helpseeker length: {S.helpseeker_queue_max_length}')
+        # print(f'Maximum helpseeker queue length: {S.helpseeker_queue_max_length}')
+        # print(f'Number of instances at least five helpseekers are waiting in the queue: {len(S.times_queue_exceeded_five_helpseekers)}')
+        # print(f'full details: {S.times_queue_exceeded_five_helpseekers}')
+        num_helpseekers.extend(S.num_helpseekers)
+        queue_exceeded.extend(S.times_queue_exceeded_five_helpseekers)
 
+    print(watch)
 
 if __name__ == '__main__':
     main()
