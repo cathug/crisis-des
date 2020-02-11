@@ -11,24 +11,25 @@
     https://www.academia.edu/35846791/Discrete_Event_Simulation._It_s_Easy_with_SimPy_
 '''
 
-import simpy, random, enum, itertools
+import simpy, random, enum, itertools, os
 from simpy.util import start_delayed
 from pprint import pprint
 # from scipy.stats import poisson
 
 
-INTERARRIVALS_FILE = '/home/plbchiang/csrp/openup-analysis/interarrivals_day_of_week_hour.csv'
 
+INTERARRIVALS_FILE = os.path.expanduser(
+    '~/csrp/openup-analysis/interarrivals_day_of_week_hour.csv')
 
 # Globals
 QUEUE_THRESHOLD = 5                         # memoize data if queue is >= threshold 
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
-MAX_NUM_SIMULTANEOUS_CHATS = 1              # maximum number of simultaneous chats allowed
+MAX_NUM_SIMULTANEOUS_CHATS = 4              # maximum number of simultaneous chats allowed
 SEED = 728                                  # for seeding the sudo-random generator
 MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
 SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes 
-                                            # per day * num days in month
+                                            #     per day * num days in month
 
 ################################################################################
 # Enums and constants
@@ -57,10 +58,10 @@ class Shifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 2)#2) # from 9:30pm to 7:30am
+    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 3)#2) # from 9:30pm to 7:30am
     AM =        ('AM',          False, 435, 915, 960, 2) #2)   # from 7:15am to 3:15 pm
-    PM =        ('PM',          False, 840, 1320, 960, 2)#2)  # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 1)#1) # from 5pm to 1 am
+    PM =        ('PM',          False, 840, 1320, 960, 3)#2)  # from 2pm to 10pm
+    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 2)#1) # from 5pm to 1 am
 
     def __init__(self, shift_name, is_edge_case, start, end, offset, capacity):
         self.shift_name = shift_name
@@ -369,6 +370,8 @@ class ServiceOperation:
         self.helpseeker_queue = []
         self.times_queue_exceeded_five_helpseekers = []
 
+        self.num_available_counsellor_processes = []
+
         self.helpseeker_queue_max_length = 0
 
 
@@ -628,8 +631,11 @@ class ServiceOperation:
             self.helpseeker_queue.remove(helpseeker_id)
             # print(f'Helpseeker Queue: {self.helpseeker_queue}')
 
-
-        
+            # store number of available counsellor processes at time
+            self.num_available_counsellor_processes.append(
+                (self.env.now, len(self.store_counsellors_active.items) )
+            )
+            
             if counsellor not in results: # if helpseeker reneged
                 # remove helpseeker from system record
                 self.helpseeker_in_system.remove(helpseeker_id)
@@ -791,49 +797,34 @@ def main():
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
     random.seed(SEED) # comment out line if not reproducing results
-    queue_exceeded = []
-    max_queue_length = []
-    num_helpseekers = []
-    num_helpseekers_served = []
-    num_helpseekers_served_g_regular = []
-    num_helpseekers_served_g_repeated = []
-    num_helpseekers_reneged = []
-    num_helpseekers_reneged_g_regular = []
-    num_helpseekers_reneged_g_repeated = []
 
-    
-    for i in range(1, 10):
-        # create environment
-        env = simpy.Environment() 
+    # create environment
+    env = simpy.Environment() 
 
-        # set up service operation and run simulation until  
-        S = ServiceOperation(env=env)
-        env.run(until=SIMULATION_DURATION)
-        # print(S.assign_risklevel() )
+    # set up service operation and run simulation until  
+    S = ServiceOperation(env=env)
+    env.run(until=SIMULATION_DURATION)
+    # print(S.assign_risklevel() )
 
-        # print('\n\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        # print(f'Iteration #{i} ')
-        # print(f'Final Results -- number of simultaneous chats: {MAX_NUM_SIMULTANEOUS_CHATS}')
-        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        # print(f'Total number of Helpseekers visited OpenUp: {S.num_helpseekers}\n')
+    # print('\n\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+    # print(f'Iteration #{i} ')
+    # print(f'Final Results -- number of simultaneous chats: {MAX_NUM_SIMULTANEOUS_CHATS}')
+    # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+    # print(f'Total number of Helpseekers visited OpenUp: {S.num_helpseekers}\n')
 
-        # percent_served = S.served/S.num_helpseekers * 100
-        # print(f'Total number of Helpseekers served: {S.served} ({percent_served:.02f}%)')
-        # print(f'Total number of Helpseekers served -- repeated user: {S.served_g_repeated}')
-        # print(f'Total number of Helpseekers served -- user: {S.served_g_regular}\n')
+    # percent_served = S.served/S.num_helpseekers * 100
+    # print(f'Total number of Helpseekers served: {S.served} ({percent_served:.02f}%)')
+    # print(f'Total number of Helpseekers served -- repeated user: {S.served_g_repeated}')
+    # print(f'Total number of Helpseekers served -- user: {S.served_g_regular}\n')
 
-        # percent_reneged = S.reneged/S.num_helpseekers * 100
-        # print(f'Total number of Helpseekers reneged: {S.reneged} ({percent_reneged:.02f}%)')
-        # print(f'Total number of Helpseekers reneged -- repeated user: {S.reneged_g_repeated}')
-        # print(f'Total number of Helpseekers reneged -- user: {S.reneged_g_regular}\n')
+    # percent_reneged = S.reneged/S.num_helpseekers * 100
+    # print(f'Total number of Helpseekers reneged: {S.reneged} ({percent_reneged:.02f}%)')
+    # print(f'Total number of Helpseekers reneged -- repeated user: {S.reneged_g_repeated}')
+    # print(f'Total number of Helpseekers reneged -- user: {S.reneged_g_regular}\n')
 
-        # print(f'Maximum helpseeker queue length: {S.helpseeker_queue_max_length}')
-        # print(f'Number of instances at least five helpseekers are waiting in the queue: {len(S.times_queue_exceeded_five_helpseekers)}')
-        # print(f'full details: {S.times_queue_exceeded_five_helpseekers}')
-        num_helpseekers.extend(S.num_helpseekers)
-        queue_exceeded.extend(S.times_queue_exceeded_five_helpseekers)
-
-    print(watch)
+    # print(f'Maximum helpseeker queue length: {S.helpseeker_queue_max_length}')
+    # print(f'Number of instances at least five helpseekers are waiting in the queue: {len(S.times_queue_exceeded_five_helpseekers)}')
+    # print(f'full details: {S.times_queue_exceeded_five_helpseekers}')
 
 if __name__ == '__main__':
     main()
