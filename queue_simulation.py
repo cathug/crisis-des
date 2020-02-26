@@ -15,7 +15,7 @@ import simpy, random, enum, itertools, os
 from simpy.util import start_delayed
 from pprint import pprint
 # from scipy.stats import poisson
-
+from simpy.events import AllOf
 
 
 INTERARRIVALS_FILE = os.path.expanduser(
@@ -25,7 +25,7 @@ INTERARRIVALS_FILE = os.path.expanduser(
 QUEUE_THRESHOLD = 5                         # memoize data if queue is >= threshold 
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
-MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 2
+MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3
 MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1
 MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1
 SEED = 728                                  # for seeding the sudo-random generator
@@ -56,7 +56,7 @@ class Colors:
 
 class Shifts(enum.Enum):
     '''
-        different types of shifts
+        different types of paid worker shifts
         shift start, end, and next shift offset in minutes
     '''
 
@@ -89,9 +89,39 @@ class Shifts(enum.Enum):
         return int(self.start + (self.end - self.start) / 2)
 
     @property
-    def capacity(self):
+    def num_workers(self):
+        '''
+            returns the number of paid workers during each shift
+        '''
         return self.num_social_workers + self.num_duty_officers
     
+#-------------------------------------------------------------------------------
+
+class VolunteerShifts(enum.Enum):
+    '''
+        different types of unpaid worker shifts
+        shift start, end, and next shift offset in minutes
+    '''
+
+    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 1)  # from 8pm to 12am
+    AM =        ('AM',          False, 630, 870, 1200, 1)   # from 10:30am to 2:30 pm
+    PM =        ('PM',          False, 900, 1140, 1200, 1)  # from 3pm to 7pm
+    SPECIAL =   ('SPECIAL',     True, 1080, 1320, 1200, 1)  # from 6pm to 10pm
+
+    def __init__(self, shift_name, is_edge_case, start, end, offset,
+        num_volunteers):
+
+        self.shift_name = shift_name
+        self.is_edge_case = is_edge_case
+        self.start = start
+        self.end = end
+        self.offset = offset
+        self.num_volunteers = num_volunteers
+
+    @property
+    def duration(self):
+        return int(self.end - self.start)
+
 #-------------------------------------------------------------------------------
 
 class JobStates(enum.Enum):
@@ -301,22 +331,6 @@ class Counsellor:
 #                 print(f'Ad Hoc Duty is interrupted at {self.env.now} '
 #                     f'due to {interrupt.cause}')            
 
-#     #---------------------------------------------------------------------------
-
-#     def handle_lunch_break(self, delay):
-#         '''
-#             handle to give counsellors a lunch break after a certain delay
-
-#             param: delay - delay (Integer or float)
-#         '''
-#         if not self.lunched and self.shift_remaining < 240:
-#             try:
-#                 yield self.env.timeout(delay)
-#                 self.lunched = True
-#             except simpy.Interrupt as interrupt:
-#                 print(f'Lunch Break is interrupted at {self.env.now} '
-#                     f'due to {interrupt.cause}')    
-
 #--------------------------------------------------------end of Counsellor class
 
 class ServiceOperation:
@@ -331,23 +345,6 @@ class ServiceOperation:
     # total_recruits = 0 # total number counsellors recruited
     # for shift in list(Shifts):
     #     total_recruits += shift.capacity
-
-
-    # mean times for random draws (type FLOATS or LIST of FLOATs)
-    # __mean_interarrival_time = [6.159314, 7.835689, 10.193088, 14.868265, 
-    #     17.56785, 25.164313, 28.825652, 23.254639, 24.467604, 21.350428, 
-    #     15.200464, 15.548507, 11.757778, 12.807021, 11.236349, 10.274989,
-    #     9.907474, 8.657091, 6.997997, 7.13911, 7.565797, 7.145651, 6.074971, 
-    #     5.925648] # mean time vector, size = 24
-                  # each entry is associated with helpseeker 
-                  # interarrivals at different hours in a day
-
-        # [7.42, 9.11, 16.39, 22.21, 
-        # 31.19, 44.78, 77.83, 43.73,
-        # 28.71, 26.65, 29.02, 22.29,
-        # 15.89, 16.02, 12.50, 13.47,
-        # 14.58, 12.92, 9.97, 8.95,
-        # 7.09, 9.00, 7.04, 7.05] 
     
     __mean_renege_time = 7.0  # mean patience before reneging
     __mean_chat_duration = 60.0 # average chat no longer than 60 minutes
@@ -399,8 +396,8 @@ class ServiceOperation:
         self.counsellor_procs_signin = [self.env.process(
             self.counsellors_signin(s) ) for s in Shifts]
 
-        # self.counsellor_procs_lunch = [self.env.process(
-        #     self.counsellors_lunch(s) ) for s in Shifts]
+        self.counsellor_procs_lunch = [self.env.process(
+            self.counsellors_lunch(s) ) for s in Shifts]
 
         self.counsellor_procs_signout = [self.env.process(
             self.counsellors_signout(s) ) for s in Shifts]
@@ -507,7 +504,7 @@ class ServiceOperation:
             create(Roles.DUTY_OFFICER, id_)
 
 
-        print(f'create_counsellors shift:{shift.shift_name}\n{self.counsellors[shift]}\n\n')
+        # print(f'create_counsellors shift:{shift.shift_name}\n{self.counsellors[shift]}\n\n')
 
     #---------------------------------------------------------------------------
 
@@ -526,15 +523,15 @@ class ServiceOperation:
 
         while True:
             for counsellor in self.counsellors[shift]:
-                print(f'\n{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
-                print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
+                # print(f'\n{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
+                # print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {self.env.now}{Colors.WHITE}')
+                # print(f'{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
 
                 yield self.store_counsellors_active.put(counsellor)
 
-            print(f'Signed in shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
-            self.print_idle_counsellors_working()
-            print()
+            # print(f'Signed in shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
+            # self.print_idle_counsellors_working()
+            # print()
 
             if counsellor_init and shift.is_edge_case:
                 yield self.env.timeout(shift.start)
@@ -546,7 +543,7 @@ class ServiceOperation:
 
     #---------------------------------------------------------------------------
 
-    def counsellors_lunch(self, shift):
+    def counsellors_lunch(self, shift):#, role):
         '''
             handle to give counsellors a lunch break after a certain delay
 
@@ -556,32 +553,44 @@ class ServiceOperation:
         total_social_worker_procs = shift.num_social_workers * Roles.SOCIAL_WORKER.num_processes
         total_duty_officer_procs = shift.num_duty_officers * Roles.DUTY_OFFICER.num_processes
         total_procs = total_social_worker_procs + total_duty_officer_procs
+        # if role is Roles.SOCIAL_WORKER:
+        #     total_procs = shift.num_social_workers * Roles.SOCIAL_WORKER.num_processes
+        # elif role is Roles.DUTY_OFFICER:
+        #     total_procs = shift.num_duty_officers * Roles.DUTY_OFFICER.num_processes
+        # else: # return now if role is Roles.VOLUNTEER 
+        #     return # 
+
 
         yield self.env.timeout(shift.lunch_start % MINUTES_PER_DAY)
         while True:
-            for _ in range(total_procs):
-                counsellor = yield self.store_counsellors_active.get(lambda x: x.shift is shift)
-                print(f'\n{Colors.BLUE}***********************************************************{Colors.WHITE}')
-                print(f'{Colors.BLUE}Counsellor {counsellor.counsellor_id} lunch at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.BLUE}***********************************************************{Colors.WHITE}\n')
-            print(f'lunch shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
-            self.print_idle_counsellors_working()
-            print()
+            # allow only counsellors at a role and a shift to grab lunch
+            counsellor_procs = [self.store_counsellors_active.get(
+                lambda x: x.shift is shift)# and x.role is role)
+                for _ in range(total_procs)]
 
+            counsellor = yield AllOf(self.env, counsellor_procs)
+            # print(counsellor)
+            #     print(f'\n{Colors.BLUE}***********************************************************{Colors.WHITE}')
+            #     print(f'{Colors.BLUE}Counsellor {counsellor.counsellor_id} lunch at t = {self.env.now}{Colors.WHITE}')
+            #     print(f'{Colors.BLUE}***********************************************************{Colors.WHITE}\n')
+            # print(f'lunch shift:{shift.shift_name} {role} at {self.env.now}.  Idle SO counsellor processes:\n')
+            # print(f'lunch shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
+            # self.print_idle_counsellors_working()
+            # print()
 
             yield self.env.timeout(self.__lunch_break) # 60 minute lunch break
 
             # back to work
             for counsellor in self.counsellors[shift]:
-                print(f'\n{Colors.BLUE}###########################################################{Colors.WHITE}')
-                print(f'{Colors.BLUE}Counsellor {counsellor.counsellor_id} resumes from lunch break at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.BLUE}###########################################################{Colors.WHITE}\n')
+                # print(f'\n{Colors.BLUE}###########################################################{Colors.WHITE}')
+                # print(f'{Colors.BLUE}Counsellor {counsellor.counsellor_id} resumes from lunch break at t = {self.env.now}{Colors.WHITE}')
+                # print(f'{Colors.BLUE}###########################################################{Colors.WHITE}\n')
 
                 yield self.store_counsellors_active.put(counsellor)
 
-            print(f'Signed in shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
-            self.print_idle_counsellors_working()
-            print()
+            # print(f'Signed in shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
+            # self.print_idle_counsellors_working()
+            # print()
 
             # repeat every 24 hours
             yield self.env.timeout(MINUTES_PER_DAY)
@@ -606,12 +615,12 @@ class ServiceOperation:
         while True:
             for _ in range(total_procs):
                 counsellor = yield self.store_counsellors_active.get(lambda x: x.shift is shift)
-                print(f'\n{Colors.RED}-----------------------------------------------------------{Colors.WHITE}')
-                print(f'{Colors.RED}Counsellor {counsellor.counsellor_id} signed out at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.RED}-----------------------------------------------------------{Colors.WHITE}\n')
-            print(f'Signed out shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
-            self.print_idle_counsellors_working()
-            print()
+            #     print(f'\n{Colors.RED}-----------------------------------------------------------{Colors.WHITE}')
+            #     print(f'{Colors.RED}Counsellor {counsellor.counsellor_id} signed out at t = {self.env.now}{Colors.WHITE}')
+            #     print(f'{Colors.RED}-----------------------------------------------------------{Colors.WHITE}\n')
+            # print(f'Signed out shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
+            # self.print_idle_counsellors_working()
+            # print()
 
             # repeat every 24 hours
             yield self.env.timeout(MINUTES_PER_DAY)
@@ -652,10 +661,10 @@ class ServiceOperation:
         risklevel = self.assign_risklevel()
         helpseeker_status = self.assign_user_status()
 
-        print(f'{Colors.HGREEN}Helpseeker '
-                f'{helpseeker_id}-{risklevel}-{helpseeker_status} '
-                f'has just accepted TOS.  Chat session created at '
-                f'{self.env.now}{Colors.HEND}\n')
+        # print(f'{Colors.HGREEN}Helpseeker '
+        #         f'{helpseeker_id}-{risklevel}-{helpseeker_status} '
+        #         f'has just accepted TOS.  Chat session created at '
+        #         f'{self.env.now}{Colors.HEND}\n')
 
         self.helpseeker_in_system.append(helpseeker_id)
         self.helpseeker_queue.append(helpseeker_id)
@@ -664,8 +673,8 @@ class ServiceOperation:
         if current_helpseeker_queue_length > self.helpseeker_queue_max_length:
             self.helpseeker_queue_max_length = current_helpseeker_queue_length
 
-            print(f'Updated max queue length to {self.helpseeker_queue_max_length}.\n'
-                f'Helpseeker Queue: {self.helpseeker_queue}\n\n\n')
+            # print(f'Updated max queue length to {self.helpseeker_queue_max_length}.\n'
+            #     f'Helpseeker Queue: {self.helpseeker_queue}\n\n\n')
 
             if current_helpseeker_queue_length >= QUEUE_THRESHOLD:
                 current_time = self.env.now
@@ -681,17 +690,17 @@ class ServiceOperation:
         
         # wait for a counsellor or renege
         if risklevel in ['HIGH', 'CRISIS']:
-            counsellor_role = Roles.DUTY_OFFICER
+            counsellor_role = [Roles.DUTY_OFFICER]
         else:
-            counsellor_role = Roles.SOCIAL_WORKER
+            counsellor_role = [Roles.SOCIAL_WORKER, Roles.DUTY_OFFICER]
 
         with self.store_counsellors_active.get(
-            lambda x: x.role==counsellor_role) as counsellor:
+            lambda x: x.role in counsellor_role) as counsellor:
             results = yield counsellor | self.env.timeout(renege_time)
 
             # dequeue helpseeker in the waiting queue
             self.helpseeker_queue.remove(helpseeker_id)
-            print(f'Helpseeker Queue: {self.helpseeker_queue}')
+            # print(f'Helpseeker Queue: {self.helpseeker_queue}')
 
             # store number of available counsellor processes at time
             self.num_available_counsellor_processes.append(
@@ -701,10 +710,10 @@ class ServiceOperation:
             if counsellor not in results: # if helpseeker reneged
                 # remove helpseeker from system record
                 self.helpseeker_in_system.remove(helpseeker_id)
-                print(f'Helpseeker in system: {self.helpseeker_in_system}')
+                # print(f'Helpseeker in system: {self.helpseeker_in_system}')
 
-                print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
-                    f'spending t = {renege_time} minutes in the queue.{Colors.HEND}')
+                # print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
+                #     f'spending t = {renege_time} minutes in the queue.{Colors.HEND}')
                 self.reneged += 1 # update counter
                 if helpseeker_status is Users.REPEATED:
                     self.reneged_g_repeated += 1
@@ -716,24 +725,24 @@ class ServiceOperation:
 
             else: # if counsellor takes in a helpseeker
                 counsellor_instance = results[list(results)[0]] #unpack the counsellor instance
-                print(f'Helpseeker {helpseeker_id} is assigned to '
-                    f'{counsellor_instance.counsellor_id} at {self.env.now}')
+                # print(f'Helpseeker {helpseeker_id} is assigned to '
+                #     f'{counsellor_instance.counsellor_id} at {self.env.now}')
 
                 # timeout is chat duration + 20 minutes to fill out postchat survey
                 yield self.env.timeout(chat_duration + self.__counsellor_postchat_survey)
 
                 # put the counsellor back into the store, so it will be available
                 # to the next helpseeker
-                print('\n*****************************')
-                print('Releasing Counsellor Resource')
-                print('*****************************\n')
+                # print('\n*****************************')
+                # print('Releasing Counsellor Resource')
+                # print('*****************************\n')
 
-                print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
-                    f'{chat_duration} minutes.\nCounsellor {counsellor_instance.counsellor_id} is now available at {self.env.now}.{Colors.HEND}')
+                # print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
+                #     f'{chat_duration} minutes.\nCounsellor {counsellor_instance.counsellor_id} is now available at {self.env.now}.{Colors.HEND}')
 
                 # remove helpseeker from system record
                 self.helpseeker_in_system.remove(helpseeker_id)
-                print(f'Helpseeker in system: {self.helpseeker_in_system}')
+                # print(f'Helpseeker in system: {self.helpseeker_in_system}')
 
                 yield self.store_counsellors_active.put(counsellor_instance)
 
@@ -826,7 +835,9 @@ class ServiceOperation:
 
         return random.choices(options, probability)[0]
 
-    #---------------------------------------------------------------------------
+    ############################################################################
+    # File IO functions
+    ############################################################################
 
     def read_interarrivals_csv(self):
         '''
@@ -874,12 +885,18 @@ def main():
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
     print(f'Total number of Helpseekers visited OpenUp: {S.num_helpseekers}\n')
 
-    percent_served = S.served/S.num_helpseekers * 100
+    try:
+        percent_served = S.served/S.num_helpseekers * 100
+    except ZeroDivisionError:
+        percent_served = 0
     print(f'Total number of Helpseekers served: {S.served} ({percent_served:.02f}%)')
     print(f'Total number of Helpseekers served -- repeated user: {S.served_g_repeated}')
     print(f'Total number of Helpseekers served -- user: {S.served_g_regular}\n')
 
-    percent_reneged = S.reneged/S.num_helpseekers * 100
+    try:
+        percent_reneged = S.reneged/S.num_helpseekers * 100
+    except ZeroDivisionError:
+        percent_reneged = 0
     print(f'Total number of Helpseekers reneged: {S.reneged} ({percent_reneged:.02f}%)')
     print(f'Total number of Helpseekers reneged -- repeated user: {S.reneged_g_repeated}')
     print(f'Total number of Helpseekers reneged -- user: {S.reneged_g_regular}\n')
