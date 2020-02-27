@@ -9,6 +9,9 @@
 
     Discrete Event Simulation Primer:
     https://www.academia.edu/35846791/Discrete_Event_Simulation._It_s_Easy_with_SimPy_
+
+    International Worker Meal and Teabreak Standards:
+    https://www.ilo.org/wcmsp5/groups/public/---ed_protect/---protrav/---travail/documents/publication/wcms_491374.pdf
 '''
 
 import simpy, random, enum, itertools, os
@@ -25,7 +28,7 @@ INTERARRIVALS_FILE = os.path.expanduser(
 QUEUE_THRESHOLD = 5                         # memoize data if queue is >= threshold 
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
-MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3
+MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 1
 MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1
 MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1
 SEED = 728                                  # for seeding the sudo-random generator
@@ -103,12 +106,12 @@ class VolunteerShifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 1)  # from 8pm to 12am
+    GRAVEYARD = ('GRAVEYARD',   False, 1200, 1440, 1200, 1)  # from 8pm to 12am
     AM =        ('AM',          False, 630, 870, 1200, 1)   # from 10:30am to 2:30 pm
     PM =        ('PM',          False, 900, 1140, 1200, 1)  # from 3pm to 7pm
-    SPECIAL =   ('SPECIAL',     True, 1080, 1320, 1200, 1)  # from 6pm to 10pm
+    SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 1)  # from 6pm to 10pm
 
-    def __init__(self, shift_name, is_edge_case, start, end, offset,
+    def __init__(self, shift_name, start, end, offset,
         num_volunteers):
 
         self.shift_name = shift_name
@@ -242,8 +245,6 @@ class Counsellor:
 
         self.env = env
         self.counsellor_id = counsellor_id
-        self.lunch_break = False
-        self.lunched = False  # whether worker had lunch
         self.adhoc_completed = False # whether worker had completed adhoc duty time slice
         self.adhoc_duty = None # to be set later
         
@@ -349,7 +350,8 @@ class ServiceOperation:
     __mean_renege_time = 7.0  # mean patience before reneging
     __mean_chat_duration = 60.0 # average chat no longer than 60 minutes
     __counsellor_postchat_survey = 20 # fixed time to fill out counsellor postchat survey
-    __lunch_break = 60 # 60 minute lunch break
+    __meal_break = 60 # 60 minute meal break
+    __tea_break = 15 # 15 minute tea break
     
     #---------------------------------------------------------------------------
 
@@ -396,8 +398,9 @@ class ServiceOperation:
         self.counsellor_procs_signin = [self.env.process(
             self.counsellors_signin(s) ) for s in Shifts]
 
-        self.counsellor_procs_lunch = [self.env.process(
-            self.counsellors_lunch(s) ) for s in Shifts]
+        self.counsellor_procs_meal = [self.env.process(
+            self.counsellors_break(s, s.lunch_start, self.__meal_break) )
+            for s in Shifts]
 
         self.counsellor_procs_signout = [self.env.process(
             self.counsellors_signout(s) ) for s in Shifts]
@@ -543,12 +546,14 @@ class ServiceOperation:
 
     #---------------------------------------------------------------------------
 
-    def counsellors_lunch(self, shift):#, role):
+    def counsellors_break(self, shift, start, duration):#, role):
         '''
             handle to give counsellors a lunch break after a certain delay
 
             param:
             shift - one of Shifts enum
+            start - time interval to start break 
+            duration - duration in minutes
         '''
         total_social_worker_procs = shift.num_social_workers * Roles.SOCIAL_WORKER.num_processes
         total_duty_officer_procs = shift.num_duty_officers * Roles.DUTY_OFFICER.num_processes
@@ -561,7 +566,7 @@ class ServiceOperation:
         #     return # 
 
 
-        yield self.env.timeout(shift.lunch_start % MINUTES_PER_DAY)
+        yield self.env.timeout(start % MINUTES_PER_DAY)
         while True:
             # allow only counsellors at a role and a shift to grab lunch
             counsellor_procs = [self.store_counsellors_active.get(
@@ -578,7 +583,7 @@ class ServiceOperation:
             # self.print_idle_counsellors_working()
             # print()
 
-            yield self.env.timeout(self.__lunch_break) # 60 minute lunch break
+            yield self.env.timeout(duration) # break for duration minutes
 
             # back to work
             for counsellor in self.counsellors[shift]:
