@@ -28,13 +28,24 @@ INTERARRIVALS_FILE = os.path.expanduser(
 QUEUE_THRESHOLD = 5                         # memoize data if queue is >= threshold 
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
-MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 1
-MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1
-MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1
+
+MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 1    # Social Worker can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1     # Duty Officer can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1        # Volunteer can process max 1 chat
+
 SEED = 728                                  # for seeding the sudo-random generator
 MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
 SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes 
                                             #     per day * num days in month
+
+POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
+MEAN_RENEGE_TIME = 7.0                      # mean patience before reneging
+MEAN_CHAT_DURATION = 60.0                   # average chat no longer than 60 minutes
+TEA_BREAK_DURATION = 15                     # 15 minute tea break
+NUM_TEA_BREAKS = 2                          # number of tea breaks per workday
+MEAL_BREAK_DURATION = 60                    # 60 minute meal break
+DEBRIEF_DURATION = 60                       # 60 minute debriefing session per day
+TRAINING_DURATION = 480                     # 8 hour training session - once per month
 
 ################################################################################
 # Enums and constants
@@ -83,6 +94,7 @@ class Shifts(enum.Enum):
     def duration(self):
         return int(self.end - self.start)
 
+
     @property
     def lunch_start(self):
         '''
@@ -90,6 +102,23 @@ class Shifts(enum.Enum):
             which is written to minimize underflow and overflow problems
         '''
         return int(self.start + (self.end - self.start) / 2)
+
+
+    @property
+    def first_tea_start(self):
+        '''
+            define tea break as the e
+        '''
+        return int(self.start + (self.end - self.start) / 4)
+
+
+    @property
+    def second_tea_start(self):
+        '''
+            define tea break as the e
+        '''
+        return int(self.end - (self.end - self.start) / 4)
+    
 
     @property
     def num_workers(self):
@@ -111,7 +140,7 @@ class VolunteerShifts(enum.Enum):
     PM =        ('PM',          False, 900, 1140, 1200, 1)  # from 3pm to 7pm
     SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 1)  # from 6pm to 10pm
 
-    def __init__(self, shift_name, start, end, offset,
+    def __init__(self, shift_name, is_edge_case, start, end, offset,
         num_volunteers):
 
         self.shift_name = shift_name
@@ -346,22 +375,59 @@ class ServiceOperation:
     # total_recruits = 0 # total number counsellors recruited
     # for shift in list(Shifts):
     #     total_recruits += shift.capacity
-    
-    __mean_renege_time = 7.0  # mean patience before reneging
-    __mean_chat_duration = 60.0 # average chat no longer than 60 minutes
-    __counsellor_postchat_survey = 20 # fixed time to fill out counsellor postchat survey
-    __meal_break = 60 # 60 minute meal break
-    __tea_break = 15 # 15 minute tea break
-    
+        
     #---------------------------------------------------------------------------
 
-    def __init__(self, *, env):
+    def __init__(self, *, env, 
+        postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
+        mean_renege_time=MEAN_RENEGE_TIME,
+        mean_chat_duration=MEAN_CHAT_DURATION,
+        num_tea_breaks=TEA_BREAK_DURATION,
+        tea_break_duration=NUM_TEA_BREAKS,
+        meal_break_duration=MEAL_BREAK_DURATION,
+        debrief_duration=DEBRIEF_DURATION,
+        training_duration=TRAINING_DURATION):
+
         '''
             init function
 
-            param: env - simpy environment
+            param:
+                env - simpy environment
+
+                postchat_fillout_time - Time alloted to complete the counsellor postchat
+                    if not specified, defaults to POSTCHAT_FILLOUT_TIME
+
+                mean_renege_time - Mean renege time in minutes.
+                    If not specified, defaults to MEAN_RENEGE_TIME
+
+                mean_chat_duration - Mean chat duration in minutes.
+                    If not specified, defaults to MEAN_CHAT_DURATION
+
+                num_tea_breaks - number of tea breaks per workday
+                    If not specified, defaults to TEA_BREAK_DURATION
+
+                tea_break_duration - Tea break duration in minutes.
+                    If not specified, defaults to NUM_TEA_BREAKS
+
+                meal_break_duration - Meal break duration in minutes.
+                    If not specified, defaults to MEAL_BREAK_DURATION
+
+                debrief_duration - duration of debriefing session
+                    If not specified, defaults to DEBRIEF_DURATION
+
+                training_duration - duration of training session
+                    If not specified, defaults to TRAINING_DURATION
         '''
         self.env = env
+
+        self.__counsellor_postchat_survey = postchat_fillout_time
+        self.__mean_renege_time = mean_renege_time
+        self.__mean_chat_duration = mean_chat_duration
+        self.__tea_break = tea_break_duration
+        self.__num_tea_breaks = num_tea_breaks
+        self.__meal_break = meal_break_duration
+        self.__debrief_duration = debrief_duration
+        self.__training_duration = training_duration
 
         # set interarrivals (a circular array of interarrival times)
         self.__mean_interarrival_time = self.read_interarrivals_csv()
@@ -397,6 +463,14 @@ class ServiceOperation:
 
         self.counsellor_procs_signin = [self.env.process(
             self.counsellors_signin(s) ) for s in Shifts]
+
+        self.counsellor_procs_meal = [self.env.process(
+            self.counsellors_break(s, s.lunch_start, self.__meal_break) )
+            for s in Shifts]
+
+        self.counsellor_procs_tea = [self.env.process(
+            self.counsellors_break(s, s.lunch_start, self.__tea_break) )
+            for s in Shifts]
 
         self.counsellor_procs_meal = [self.env.process(
             self.counsellors_break(s, s.lunch_start, self.__meal_break) )
@@ -599,7 +673,6 @@ class ServiceOperation:
 
             # repeat every 24 hours
             yield self.env.timeout(MINUTES_PER_DAY)
-
 
     #---------------------------------------------------------------------------
 
