@@ -28,17 +28,17 @@ INTERARRIVALS_FILE = os.path.expanduser(
 # Globals
 ################################################################################
 
-QUEUE_THRESHOLD = 5                         # memoize data if queue is >= threshold 
+QUEUE_THRESHOLD = 0                         # memoize data if queue is >= threshold 
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
 
-MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3    # Social Worker can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 4    # Social Worker can process max 1 chat
 MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1     # Duty Officer can process max 1 chat
 MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1        # Volunteer can process max 1 chat
 
 SEED = 728                                  # for seeding the sudo-random generator
 MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
-SIMULATION_DURATION = MINUTES_PER_DAY * 3  # currently given as num minutes 
+SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes 
                                             #     per day * num days in month
 
 POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
@@ -51,11 +51,11 @@ MEAN_CHAT_DURATION_DUTY_OFFICER = 58.5
 MEAN_CHAT_DURATION_VOLUNTEER = 55.7
 
 
-TEA_BREAK_DURATION = 15                     # 15 minute tea break
-NUM_TEA_BREAKS = 2                          # number of tea breaks per workday
+TEA_BREAK_DURATION = 15                     # 20 minute tea break
 MEAL_BREAK_DURATION = 60                    # 60 minute meal break
 DEBRIEF_DURATION = 60                       # 60 minute debriefing session per day
 TRAINING_DURATION = 480                     # 8 hour training session - once per month
+LAST_CASE_CUTOFF = 5 
 
 ################################################################################
 # Enums and constants
@@ -84,13 +84,15 @@ class Shifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 1, 1) # from 9:30pm to 7:30am
-    AM =        ('AM',          False, 435, 915, 960, 1, 1)   # from 7:15am to 3:15 pm
-    PM =        ('PM',          False, 840, 1320, 960, 1, 1)  # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 1, 0) # from 5pm to 1 am
+    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 1, 1, 1290, 30, 435, 15) # from 9:30pm to 7:30am
+    AM =        ('AM',          False, 435, 915, 960, 1, 1, 435, 15, 840, 15)   # from 7:15am to 3:15 pm
+    PM =        ('PM',          False, 840, 1320, 960, 2, 1, 840, 15, 1290, 30)  # from 2pm to 10pm
+    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 2, 0, None, None, None, None) # from 5pm to 1 am
 
     def __init__(self, shift_name, is_edge_case, start, end, offset,
-        num_social_workers, num_duty_officers):
+        num_social_workers, num_duty_officers,
+        first_debriefing, first_debriefing_duration,
+        last_debriefing, last_debriefing_duration):
 
         self.shift_name = shift_name
         self.is_edge_case = is_edge_case
@@ -99,10 +101,14 @@ class Shifts(enum.Enum):
         self.offset = offset
         self.num_social_workers = num_social_workers
         self.num_duty_officers = num_duty_officers
+        # self.first_debriefing = first_debriefing
+        # self.first_debriefing_duration = first_debriefing_duration
+        # self.last_debriefing = last_debriefing
+        # self.last_debriefing_duration = last_debriefing_duration
 
     @property
     def duration(self):
-        return int(self.end - self.start)
+        return int(self.end - self.start)  
 
 
     @property
@@ -123,7 +129,7 @@ class Shifts(enum.Enum):
 
 
     @property
-    def second_tea_start(self):
+    def last_tea_start(self):
         '''
             tea break two hours before the shift ends
         '''
@@ -145,7 +151,7 @@ class VolunteerShifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   False, 1200, 1440, 1200, 2)  # from 8pm to 12am
+    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 2)  # from 8pm to 12am
     AM =        ('AM',          False, 630, 870, 1200, 2)   # from 10:30am to 2:30 pm
     PM =        ('PM',          False, 900, 1140, 1200, 2)  # from 3pm to 7pm
     SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 2)  # from 6pm to 10pm
@@ -169,7 +175,7 @@ class VolunteerShifts(enum.Enum):
         '''
             tea break two hours after the shift has started
         '''
-        return int(self.start + (self.end - self.start) / 4)
+        return int(self.start + 120)
 
 #-------------------------------------------------------------------------------
 
@@ -200,9 +206,9 @@ class AdHocDuty(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    MORNING =   ('MORNING', 600, 840)       # from 10am to 2pm
-    AFTERNOON = ('AFTERNOON', 840, 1080)    # from 2pm to 6pm
-    EVENING =   ('EVENING', 1080, 1320)     # from 6pm to 10pm    
+    MORNING =   ('MORNING',     600,    840)    # from 10am to 2pm
+    AFTERNOON = ('AFTERNOON',   840,    1080)   # from 2pm to 6pm
+    EVENING =   ('EVENING',     1080,   1320)   # from 6pm to 10pm    
 
     def __init__(self, period_name, start, end):
         self.period_name = period_name
@@ -240,8 +246,8 @@ class Users(enum.Enum):
     '''
 
     # user enum | user status | user index | probability
-    REPEATED =      ('REPEATED USER',       1,  .31)
-    NON_REPEATED =  ('NON-REPEATED USER',   2,  .69)
+    REPEATED =      ('REPEATED_USER',       1,  .31)
+    NON_REPEATED =  ('NONREPEATED_USER',    2,  .69)
     
     def __init__(self, user_type, index, probability):
         self.user_type = user_type
@@ -257,9 +263,9 @@ class Roles(enum.Enum):
         # TODO: add repeated/non-repeated user mean chat duration
     '''
 
-    SOCIAL_WORKER = ('SOCIAL WORKER',   2, 52.4)
-    DUTY_OFFICER =   ('DUTY OFFICER',   1, 58.5)
-    VOLUNTEER =     ('VOLUNTEER',       1, 55.7)
+    SOCIAL_WORKER = ('SOCIAL_WORKER',   MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER , 52.4)
+    DUTY_OFFICER =  ('DUTY_OFFICER',    MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER , 58.5)
+    VOLUNTEER =     ('VOLUNTEER',       MAX_SIMULTANEOUS_CHATS_VOLUNTEER , 55.7)
 
     def __init__(self, counsellor_type, num_processes, mean_chat_duration):
         self.counsellor_type = counsellor_type
@@ -299,76 +305,16 @@ class Counsellor:
 
         self.env = env
         self.counsellor_id = counsellor_id
-        self.adhoc_completed = False # whether worker had completed adhoc duty time slice
-        self.adhoc_duty = None # to be set later
+        # self.adhoc_completed = False # whether worker had completed adhoc duty time slice
+        # self.adhoc_duty = None # to be set later
         
         self.shift = shift
-        self.shift_remaining = shift.duration
         self.role = role
         self.priority = None # to be set later
 
     #---------------------------------------------------------------------------
     # Interrupts and Interrupt Service Routines (ISR)
     #---------------------------------------------------------------------------
-
-#     def schedule(self):
-#         '''
-#             counsellor schedule at a case-by-case basis
-#         '''
-#         schedule_adhoc_duty(self.adhoc_duty.start) # edge case
-#         schedule_lunch(self.shift.lunch_start % MINUTES_PER_DAY) # edge case
-
-
-#         while True:
-#             while self.shift_remaining > 0:
-#                 try:
-#                     # in idle state
-#                     start = self.env.now
-#                     yield self.env.timeout(self.shift_remaining)
-#                     self.shift_remaining = 0
-
-                
-#                     cause = interrupt.cause
-
-#                     if cause is JobStates.SIGNOUT:
-#                         with state.request(priority=cause.priority) as state:
-#                             yield state & self.env.timeout(self.shift.duration)
-
-#                         print(f'{self.counsellor_id} shift starts at {self.env.now}')
-
-
-#                     elif cause is JobStates.AD_HOC:
-#                         self.adhoc_completed = True
-
-#                         with state.request(priority=cause.priority) as state:
-#                             yield state & self.env.timeout(self.adhoc_duty.duration)
-# self.env.process(handle_adhoc_jobs(MINUTES_PER_DAY) )
-
-
-# self.process.interrupt(JobStates.AD_HOC)
-
-#                     elif cause is JobStates.LUNCH:
-#                         # give lunch break
-#                         print(f'{self.counsellor_id} Requesting a lunch break at '
-#                             f'{self.env.now}')
-
-#                         self.lunched = True
-
-#                         with self.store_counsellors_active.get(lambda x: x==self.user) as request:
-
-#                         yield request & self.env.timeout(self.lunch_break)
-# self.env.process(handle_lunch_break(MINUTES_PER_DAY) )
-
-
-# self.process.interrupt(JobStates.LUNCH) 
-
-#                     elif cause is JobStates.COUNSELLING:
-
-
-#                     # update shift_remaining
-#                     self.shift_remaining -= self.env.now - start
-
-#     #---------------------------------------------------------------------------
 
 #     def handle_adhoc_jobs(self, delay):
 #         '''
@@ -406,10 +352,8 @@ class ServiceOperation:
     def __init__(self, *, env, 
         postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
         mean_renege_time=MEAN_RENEGE_TIME,
-        num_tea_breaks=NUM_TEA_BREAKS,
         tea_break_duration=TEA_BREAK_DURATION,
         meal_break_duration=MEAL_BREAK_DURATION,
-        debrief_duration=DEBRIEF_DURATION,
         training_duration=TRAINING_DURATION):
 
         '''
@@ -427,17 +371,11 @@ class ServiceOperation:
                 mean_chat_duration - Mean chat duration in minutes.
                     If not specified, defaults to MEAN_CHAT_DURATION
 
-                num_tea_breaks - number of tea breaks per workday
-                    If not specified, defaults to TEA_BREAK_DURATION
-
                 tea_break_duration - Tea break duration in minutes.
                     If not specified, defaults to NUM_TEA_BREAKS
 
                 meal_break_duration - Meal break duration in minutes.
                     If not specified, defaults to MEAL_BREAK_DURATION
-
-                debrief_duration - duration of debriefing session
-                    If not specified, defaults to DEBRIEF_DURATION
 
                 training_duration - duration of training session
                     If not specified, defaults to TRAINING_DURATION
@@ -447,9 +385,7 @@ class ServiceOperation:
         self.__counsellor_postchat_survey = postchat_fillout_time
         self.__mean_renege_time = mean_renege_time
         self.__tea_break = tea_break_duration
-        self.__num_tea_breaks = num_tea_breaks
         self.__meal_break = meal_break_duration
-        self.__debrief_duration = debrief_duration
         self.__training_duration = training_duration
 
         # set interarrivals (a circular array of interarrival times)
@@ -467,7 +403,7 @@ class ServiceOperation:
  
         self.helpseeker_in_system = []
         self.helpseeker_queue = []
-        self.times_queue_exceeded_five_helpseekers = []
+        self.times_queue_not_empty = []
 
         self.num_available_counsellor_processes = []
 
@@ -487,8 +423,8 @@ class ServiceOperation:
             self.counsellors[vs] = []
             self.create_counsellors(vs)
 
-        print('Counsellors Arranged:')
-        pprint(self.counsellors)
+        # print('Counsellors Arranged:')
+        # pprint(self.counsellors)
 
         # set up signin schedule
         self.counsellor_procs_signin = [self.env.process(
@@ -499,23 +435,32 @@ class ServiceOperation:
         # pprint(self.volunteer_procs_signin)
 
         # set up meal break schedule
-        self.counsellor_procs_meal = [self.env.process(
-            self.counsellors_break(s, s.lunch_start, self.__meal_break, 'meal') )
-            for s in Shifts]
+        self.sw_procs_meal = [self.env.process(
+            self.counsellors_break(s, Roles.SOCIAL_WORKER, s.lunch_start,
+                self.__meal_break, 'meal') ) for s in Shifts]
+
+        self.do_procs_meal = [self.env.process(
+            self.counsellors_break(s, Roles.DUTY_OFFICER, s.lunch_start,
+                self.__meal_break, 'meal') ) for s in Shifts]
 
         # set up tea breaks
         # paid counsellors get two tea breaks
         # volunteers get one tea break
-        self.counsellor_procs_first_tea = [self.env.process(
-            self.counsellors_break(s, s.first_tea_start, self.__tea_break, 'first tea') )
-            for s in Shifts]
-        self.counsellor_procs_second_tea = [self.env.process(
-            self.counsellors_break(s, s.second_tea_start, self.__tea_break, 'second tea') )
-                for s in Shifts]
+        self.sw_procs_first_tea = [self.env.process(
+            self.counsellors_break(s, Roles.SOCIAL_WORKER, s.first_tea_start,
+                self.__tea_break, 'first tea') ) for s in Shifts]
+        self.sw_procs_last_tea = [self.env.process(
+            self.counsellors_break(s, Roles.SOCIAL_WORKER, s.last_tea_start,
+                self.__tea_break, 'last tea') ) for s in Shifts]
+        self.do_procs_first_tea = [self.env.process(
+            self.counsellors_break(s, Roles.DUTY_OFFICER, s.first_tea_start,
+                self.__tea_break, 'first tea') ) for s in Shifts]
+        self.do_procs_last_tea = [self.env.process(
+            self.counsellors_break(s, Roles.DUTY_OFFICER, s.last_tea_start,
+                self.__tea_break, 'last tea') ) for s in Shifts]
         self.volunteer_procs_tea = [self.env.process(
-            self.counsellors_break(s, s.tea_start, self.__tea_break, 'tea') )
-                for s in VolunteerShifts]
-
+            self.counsellors_break(s, Roles.VOLUNTEER, s.tea_start,
+                self.__tea_break, 'tea') ) for s in VolunteerShifts]
 
         # set up signout schedule
         self.counsellor_procs_signout = [self.env.process(
@@ -650,15 +595,15 @@ class ServiceOperation:
 
         while True:
             for counsellor in self.counsellors[shift]:
-                print(f'\n{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
-                print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
+                # print(f'\n{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
+                # print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {self.env.now}{Colors.WHITE}')
+                # print(f'{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
 
                 yield self.store_counsellors_active.put(counsellor)
 
-            print(f'Signed in shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
-            self.print_idle_counsellors_working()
-            print()
+            # print(f'Signed in shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
+            # self.print_idle_counsellors_working()
+            # print()
 
             if counsellor_init and shift.is_edge_case:
                 yield self.env.timeout(shift.start)
@@ -670,67 +615,66 @@ class ServiceOperation:
 
     #---------------------------------------------------------------------------
 
-    def counsellors_break(self, shift, start, duration, break_type):#, role):
+    def counsellors_break(self, shift, role, start, duration, break_type):
         '''
             handle to give counsellors a break after a certain delay
 
             param:
             shift - one of Shifts enum
+            role - one of Roles enum
             start - time interval to start break 
             duration - duration in minutes
         '''
-        if shift in Shifts:
-            total_social_worker_procs = shift.num_social_workers * Roles.SOCIAL_WORKER.num_processes
-            total_duty_officer_procs = shift.num_duty_officers * Roles.DUTY_OFFICER.num_processes
-            total_procs = total_social_worker_procs + total_duty_officer_procs
-        elif shift in VolunteerShifts:
-            total_volunteer_procs = shift.num_volunteers * Roles.VOLUNTEER.num_processes
-            total_procs = total_volunteer_procs
+        total_procs = 0
 
-        # if role is Roles.SOCIAL_WORKER:
-        #     total_procs = shift.num_social_workers * Roles.SOCIAL_WORKER.num_processes
-        # elif role is Roles.DUTY_OFFICER:
-        #     total_procs = shift.num_duty_officers * Roles.DUTY_OFFICER.num_processes
-        # else: # return now if role is Roles.VOLUNTEER 
-        #     return # 
+        if shift in Shifts:
+            if role is Roles.SOCIAL_WORKER:
+                total_procs = shift.num_social_workers * role.num_processes
+            elif role is Roles.DUTY_OFFICER:
+                total_procs = shift.num_duty_officers * role.num_processes
+
+        elif shift in VolunteerShifts and role is Roles.VOLUNTEER:
+            total_procs = shift.num_volunteers * role.num_processes
+
 
 
         yield self.env.timeout(start % MINUTES_PER_DAY)
         while True:
             # allow only counsellors at a role and a shift to take break
             counsellor_procs = [self.store_counsellors_active.get(
-                lambda x: x.shift is shift)# and x.role is role)
+                lambda x: x.shift is shift and x.role is role)
                 for _ in range(total_procs)]
 
+            # wait for all procs
             counsellor = yield AllOf(self.env, counsellor_procs)
-            # print(counsellor)
-                # print(f'\n{Colors.BLUE}*********************************************************************{Colors.WHITE}')
-                # print(f'{Colors.BLUE}Counsellor {counsellor.counsellor_id} break at t = {self.env.now}{Colors.WHITE}')
-                # print(f'{Colors.BLUE}*********************************************************************{Colors.WHITE}\n')
-            # print(f'lunch shift:{shift.shift_name} {role} at {self.env.now}.  Idle SO counsellor processes:\n')
-            # print(f'lunch shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
-            self.print_idle_counsellors_working()
-            print(f'\n{Colors.BLUE}*********************************************************************{Colors.WHITE}')
-            print(f'{Colors.BLUE}Counsellor {counsellor}\n AFK for {break_type} break at t = {self.env.now}{Colors.WHITE}')
-            print(f'\n{Colors.BLUE}*********************************************************************{Colors.WHITE}')
-            print()
+
+            # get all nested counsellor instances
+            counsellor_instances = [counsellor[list(counsellor)[i]] for i in range(total_procs)]
+
+            # for c in counsellor_instances:
+            #     print(f'\n{Colors.BLUE}*********************************************************************{Colors.WHITE}')
+            #     print(f'{Colors.BLUE}Counsellor {c.counsellor_id} AFK for {break_type} at t = {self.env.now}{Colors.WHITE}')
+            #     print(f'{Colors.BLUE}*********************************************************************{Colors.WHITE}\n')
+            # print(f'lunch shift:{shift.shift_name}, {role} at {self.env.now}.  Idle SO counsellor processes:\n')
+            # self.print_idle_counsellors_working()
+            # print()
 
             yield self.env.timeout(duration) # break for duration minutes
 
             # back to work
-            for counsellor in self.counsellors[shift]:
-                print(f'\n{Colors.BLUE}#####################################################################{Colors.WHITE}')
-                print(f'{Colors.BLUE}Counsellor {counsellor.counsellor_id} BAK from {break_type} break at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.BLUE}#####################################################################{Colors.WHITE}\n')
+            # put filterstoreget counsellor objects back 
+            for c in counsellor_instances:
+                # print(f'\n{Colors.BLUE}#####################################################################{Colors.WHITE}')
+                # print(f'{Colors.BLUE}Counsellor {c.counsellor_id} BAK from {break_type} break at t = {self.env.now}{Colors.WHITE}')
+                # print(f'{Colors.BLUE}#####################################################################{Colors.WHITE}\n')
+                yield self.store_counsellors_active.put(c)
 
-                yield self.store_counsellors_active.put(counsellor)
+            # print(f'BAK shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
+            # self.print_idle_counsellors_working()
+            # print()
 
-            print(f'BAK shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
-            self.print_idle_counsellors_working()
-            print()
-
-            # repeat every 24 hours
-            yield self.env.timeout(MINUTES_PER_DAY)
+            # repeat every 24 hours - duration
+            yield self.env.timeout(MINUTES_PER_DAY-duration)
 
     #---------------------------------------------------------------------------
 
@@ -757,12 +701,12 @@ class ServiceOperation:
         while True:
             for _ in range(total_procs):
                 counsellor = yield self.store_counsellors_active.get(lambda x: x.shift is shift)
-                print(f'\n{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}')
-                print(f'{Colors.RED}Counsellor {counsellor.counsellor_id} signed out at t = {self.env.now}{Colors.WHITE}')
-                print(f'{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}\n')
-            print(f'Signed out shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
-            self.print_idle_counsellors_working()
-            print()
+            #     print(f'\n{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}')
+            #     print(f'{Colors.RED}Counsellor {counsellor.counsellor_id} signed out at t = {self.env.now}{Colors.WHITE}')
+            #     print(f'{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}\n')
+            # print(f'Signed out shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
+            # self.print_idle_counsellors_working()
+            # print()
 
             # repeat every 24 hours
             yield self.env.timeout(MINUTES_PER_DAY)
@@ -802,45 +746,55 @@ class ServiceOperation:
         helpseeker_status = self.assign_user_status()
         risklevel = self.assign_risklevel(helpseeker_status)
 
-        print(f'{Colors.HGREEN}Helpseeker '
-                f'{helpseeker_id}-{risklevel}-{helpseeker_status} '
-                f'has just accepted TOS.  Chat session created at '
-                f'{self.env.now}{Colors.HEND}\n')
+        # print(f'\n{Colors.HGREEN}*********************************************************************{Colors.HEND}')
+        # print(f'{Colors.HGREEN}Helpseeker '
+        #         f'{helpseeker_id}-{risklevel}-{helpseeker_status} '
+        #         f'has just accepted TOS.  Chat session created at '
+        #         f'{self.env.now:.3f}{Colors.HEND}')
+        # print(f'{Colors.HGREEN}*********************************************************************{Colors.HEND}\n')
+
 
         self.helpseeker_in_system.append(helpseeker_id)
         self.helpseeker_queue.append(helpseeker_id)
 
-        current_helpseeker_queue_length = len(self.helpseeker_queue)
-        if current_helpseeker_queue_length > self.helpseeker_queue_max_length:
-            self.helpseeker_queue_max_length = current_helpseeker_queue_length
-
-            print(f'Updated max queue length to {self.helpseeker_queue_max_length}.\n'
-                f'Helpseeker Queue: {self.helpseeker_queue}\n\n\n')
-
-            if current_helpseeker_queue_length >= QUEUE_THRESHOLD:
-                current_time = self.env.now
-                current_day_minutes = int(current_time) % MINUTES_PER_DAY
-                print(f'weekday: {int(current_time / MINUTES_PER_DAY)} - hour: {int(current_day_minutes / 60)}')
-
-                self.times_queue_exceeded_five_helpseekers.append(
-                    (f'weekday:{int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK}',
-                    f'hour:{int(current_day_minutes / MINUTES_PER_HOUR)}')
-                )
+        
 
         
-        
-        # wait for a counsellor or renege
+        # if high or crisis case, duty officer takes        
         if risklevel in ['HIGH', 'CRISIS']:
             counsellor_role = [Roles.DUTY_OFFICER]
-        else:
+        else: # otherwise assign to social worker or counsellor
             counsellor_role = [Roles.SOCIAL_WORKER, Roles.VOLUNTEER]
 
+        # wait for a counsellor or renege
+        # get only counsellors matching risklevel to role
+        # and remaining shift > LAST_CASE_CUTOFF
         with self.store_counsellors_active.get(
-            lambda x: x.role in counsellor_role) as counsellor:
+            lambda x: x.role in counsellor_role and 
+                x.shift.end%MINUTES_PER_DAY - int(self.env.now)%MINUTES_PER_DAY > LAST_CASE_CUTOFF) as counsellor:
             results = yield counsellor | self.env.timeout(renege_time)
 
             # dequeue helpseeker in the waiting queue
             self.helpseeker_queue.remove(helpseeker_id)
+
+            current_helpseeker_queue_length = len(self.helpseeker_queue)
+            if current_helpseeker_queue_length > self.helpseeker_queue_max_length:
+                self.helpseeker_queue_max_length = current_helpseeker_queue_length
+
+                # print(f'Updated max queue length to {self.helpseeker_queue_max_length}.\n'
+                #     f'Helpseeker Queue: {self.helpseeker_queue}\n\n\n')
+
+            if current_helpseeker_queue_length >= QUEUE_THRESHOLD:
+                current_time = self.env.now
+                current_day_minutes = int(current_time) % MINUTES_PER_DAY
+                # print(f'weekday: {int(current_time / MINUTES_PER_DAY)} - hour: {int(current_day_minutes / 60)}, Queue Length: {current_helpseeker_queue_length}')
+
+                self.times_queue_not_empty.append(
+                    (f'weekday:{int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK}',
+                    f'hour:{int(current_day_minutes / MINUTES_PER_HOUR)}',
+                    f'queue_length:{current_helpseeker_queue_length}'
+                ))
+
             # print(f'Helpseeker Queue: {self.helpseeker_queue}')
 
             # store number of available counsellor processes at time
@@ -851,10 +805,12 @@ class ServiceOperation:
             if counsellor not in results: # if helpseeker reneged
                 # remove helpseeker from system record
                 self.helpseeker_in_system.remove(helpseeker_id)
-                print(f'Helpseeker in system: {self.helpseeker_in_system}')
+                # print(f'Helpseeker in system: {self.helpseeker_in_system}')
 
-                print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
-                    f'spending t = {renege_time} minutes in the queue.{Colors.HEND}')
+                # print(f'\n{Colors.HRED}*********************************************************************{Colors.HEND}')
+                # print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
+                #     f'spending t = {renege_time:.3f} minutes in the queue.{Colors.HEND}')
+                # print(f'{Colors.HRED}*********************************************************************{Colors.HEND}\n')
                 self.reneged += 1 # update counter
                 if helpseeker_status is Users.REPEATED:
                     self.reneged_g_repeated += 1
@@ -866,8 +822,13 @@ class ServiceOperation:
 
             else: # if counsellor takes in a helpseeker
                 counsellor_instance = results[list(results)[0]] #unpack the counsellor instance
-                print(f'Helpseeker {helpseeker_id} is assigned to '
-                    f'{counsellor_instance.counsellor_id} at {self.env.now}')
+
+                # print(f'\n{Colors.HGREEN}*********************************************************************{Colors.HEND}')
+                # print(f'Helpseeker {helpseeker_id} is assigned to '
+                #     f'{counsellor_instance.counsellor_id} at {self.env.now:.3f}')
+                # print(f'{Colors.HGREEN}*********************************************************************{Colors.HEND}\n')
+
+                
                 chat_duration = self.assign_chat_duration(counsellor_instance.role)
 
                 # timeout is chat duration + 20 minutes to fill out postchat survey
@@ -875,17 +836,17 @@ class ServiceOperation:
 
                 # put the counsellor back into the store, so it will be available
                 # to the next helpseeker
-                print('\n*****************************')
-                print('Releasing Counsellor Resource')
-                print('*****************************\n')
+                # print(f'\n{Colors.HBLUE}*********************************************************************{Colors.HEND}')
+                # print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
+                #     f'{chat_duration:.3f} minutes.\nCounsellor {counsellor_instance.counsellor_id} '
+                #     f'is now available at {self.env.now:.3f}.{Colors.HEND}')
+                # print(f'{Colors.HBLUE}*********************************************************************{Colors.HEND}\n')
 
-                print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
-                    f'{chat_duration} minutes.\nCounsellor {counsellor_instance.counsellor_id} '
-                    f'is now available at {self.env.now}.{Colors.HEND}')
+                
 
                 # remove helpseeker from system record
                 self.helpseeker_in_system.remove(helpseeker_id)
-                print(f'Helpseeker in system: {self.helpseeker_in_system}')
+                # print(f'Helpseeker in system: {self.helpseeker_in_system}')
 
                 yield self.store_counsellors_active.put(counsellor_instance)
 
@@ -1017,7 +978,7 @@ def main():
     print('Initializing OpenUp Queue Simulation')
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
-    # random.seed(SEED) # comment out line if not reproducing results
+    random.seed(SEED) # comment out line if not reproducing results
 
     # # create environment
     env = simpy.Environment() 
@@ -1049,8 +1010,8 @@ def main():
     print(f'Total number of Helpseekers reneged -- user: {S.reneged_g_regular}\n')
 
     print(f'Maximum helpseeker queue length: {S.helpseeker_queue_max_length}')
-    print(f'Number of instances at least five helpseekers are waiting in the queue: {len(S.times_queue_exceeded_five_helpseekers)}')
-    print(f'full details: {S.times_queue_exceeded_five_helpseekers}')
+    print(f'Number of instances waiting queue is not empty after first person has been dequeued: {len(S.times_queue_not_empty)}')
+    # print(f'full details: {S.times_queue_not_empty}')
 
 if __name__ == '__main__':
     main()
