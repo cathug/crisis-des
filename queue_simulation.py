@@ -42,7 +42,7 @@ SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes
                                             #     per day * num days in month
 
 POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
-MEAN_RENEGE_TIME = 7.0                      # mean patience before reneging
+MEAN_RENEGE_TIME = 2.3                      # mean patience before reneging
 
 
 # average chat no longer than 60 minutes
@@ -55,7 +55,7 @@ TEA_BREAK_DURATION = 15                     # 20 minute tea break
 MEAL_BREAK_DURATION = 60                    # 60 minute meal break
 DEBRIEF_DURATION = 60                       # 60 minute debriefing session per day
 TRAINING_DURATION = 480                     # 8 hour training session - once per month
-LAST_CASE_CUTOFF = 5 
+LAST_CASE_CUTOFF = 30 
 
 ################################################################################
 # Enums and constants
@@ -86,8 +86,8 @@ class Shifts(enum.Enum):
 
     GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 1, 1, 1290, 30, 435, 15) # from 9:30pm to 7:30am
     AM =        ('AM',          False, 435, 915, 960, 1, 1, 435, 15, 840, 15)   # from 7:15am to 3:15 pm
-    PM =        ('PM',          False, 840, 1320, 960, 2, 1, 840, 15, 1290, 30)  # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 2, 0, None, None, None, None) # from 5pm to 1 am
+    PM =        ('PM',          False, 840, 1320, 960, 1, 1, 840, 15, 1290, 30)  # from 2pm to 10pm
+    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 1, 0, None, None, None, None) # from 5pm to 1 am
 
     def __init__(self, shift_name, is_edge_case, start, end, offset,
         num_social_workers, num_duty_officers,
