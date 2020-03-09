@@ -32,7 +32,7 @@ QUEUE_THRESHOLD = 0                         # memoize data if queue is >= thresh
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
 
-MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 4    # Social Worker can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3    # Social Worker can process max 1 chat
 MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1     # Duty Officer can process max 1 chat
 MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1        # Volunteer can process max 1 chat
 
@@ -595,13 +595,17 @@ class ServiceOperation:
 
         while True:
             for counsellor in self.counsellors[shift]:
+                # time_now = self.env.now
                 # print(f'\n{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
-                # print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {self.env.now}{Colors.WHITE}')
+                # print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {time_now}{Colors.WHITE}')
                 # print(f'{Colors.GREEN}+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
-
+                # assert time_now % MINUTES_PER_DAY == shift.start or time_now == 0
+                # assert counsellor not in self.store_counsellors_active.items
                 yield self.store_counsellors_active.put(counsellor)
 
-            # print(f'Signed in shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
+            time_now = self.env.now
+            # print(f'Signed in shift:{shift.shift_name} at {time_now}({int((int(time_now)%MINUTES_PER_DAY)/60)%24}).'
+            #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
             # self.print_idle_counsellors_working()
             # print()
 
@@ -655,7 +659,10 @@ class ServiceOperation:
             #     print(f'\n{Colors.BLUE}*********************************************************************{Colors.WHITE}')
             #     print(f'{Colors.BLUE}Counsellor {c.counsellor_id} AFK for {break_type} at t = {self.env.now}{Colors.WHITE}')
             #     print(f'{Colors.BLUE}*********************************************************************{Colors.WHITE}\n')
-            # print(f'lunch shift:{shift.shift_name}, {role} at {self.env.now}.  Idle SO counsellor processes:\n')
+
+            # time_now = self.env.now
+            # print(f'AFK shift:{shift.shift_name}, {role} at {time_now}({int((int(time_now)%MINUTES_PER_DAY)/60)%24}).'
+            #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:\n')
             # self.print_idle_counsellors_working()
             # print()
 
@@ -669,7 +676,9 @@ class ServiceOperation:
                 # print(f'{Colors.BLUE}#####################################################################{Colors.WHITE}\n')
                 yield self.store_counsellors_active.put(c)
 
-            # print(f'BAK shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:')
+            time_now = self.env.now
+            # print(f'BAK shift:{shift.shift_name} at {time_now}({int((int(time_now)%MINUTES_PER_DAY)/60)%24}).'
+            #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
             # self.print_idle_counsellors_working()
             # print()
 
@@ -701,10 +710,13 @@ class ServiceOperation:
         while True:
             for _ in range(total_procs):
                 counsellor = yield self.store_counsellors_active.get(lambda x: x.shift is shift)
-            #     print(f'\n{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}')
-            #     print(f'{Colors.RED}Counsellor {counsellor.counsellor_id} signed out at t = {self.env.now}{Colors.WHITE}')
-            #     print(f'{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}\n')
-            # print(f'Signed out shift:{shift.shift_name} at {self.env.now}.  Idle SO counsellor processes:\n')
+                # print(f'\n{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}')
+                # print(f'{Colors.RED}Counsellor {counsellor.counsellor_id} signed out at t = {self.env.now}{Colors.WHITE}')
+                # print(f'{Colors.RED}---------------------------------------------------------------------{Colors.WHITE}\n')
+
+            time_now = self.env.now
+            # print(f'Signed out shift:{shift.shift_name} at {time_now}({int((int(time_now)%MINUTES_PER_DAY)/60)%24}).'
+            #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:\n')
             # self.print_idle_counsellors_working()
             # print()
 
