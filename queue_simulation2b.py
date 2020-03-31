@@ -32,9 +32,9 @@ QUEUE_THRESHOLD = 0                         # memoize data if queue is >= thresh
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
 
-MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3    # Social Worker can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3    # Social Worker can process max 2 chats
 MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1     # Duty Officer can process max 1 chat
-MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1        # Volunteer can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 2        # Volunteer can process max 1 chat
 
 SEED = 728                                  # for seeding the sudo-random generator
 MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
@@ -155,7 +155,7 @@ class SocialWorkerShifts(enum.Enum):
     GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 2)   # from 9:30pm to 7:30am
     AM =        ('AM',          False, 435, 915, 960, 2)    # from 7:15am to 3:15 pm
     PM =        ('PM',          False, 840, 1320, 960, 2)   # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 2)   # from 5pm to 1 am
+    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 8)   # from 5pm to 1 am
 
     def __init__(self, shift_name, is_edge_case, 
         start, end, offset,
@@ -208,7 +208,7 @@ class VolunteerShifts(enum.Enum):
     GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 2)  # from 8pm to 12am
     AM =        ('AM',          False, 630, 870, 1200, 2)   # from 10:30am to 2:30 pm
     PM =        ('PM',          False, 900, 1140, 1200, 2)  # from 3pm to 7pm
-    SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 2)  # from 6pm to 10pm
+    SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 10)  # from 6pm to 10pm
 
     def __init__(self, shift_name, is_edge_case, start, end, offset,
         num_workers):
@@ -667,7 +667,7 @@ class ServiceOperation:
                     Counsellor(self.env, counsellor_id, shift, role)
             )
             
-        print(f'create_counsellors shift:{shift.shift_name}\n{self.counsellors[shift]}\n\n')
+        # print(f'create_counsellors shift:{shift.shift_name}\n{self.counsellors[shift]}\n\n')
 
     #---------------------------------------------------------------------------
 
@@ -717,17 +717,17 @@ class ServiceOperation:
                     if shift_remaining == shift.duration or shift_remaining == shift.end%MINUTES_PER_DAY:
                         # begin shift by putting counsellors in the store
                         for counsellor in self.counsellors[shift]:
-                            print(f'\n{Colors.GREEN}++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
-                            print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {start_shift_time:.3f}{Colors.WHITE}')
-                            print(f'{Colors.GREEN}++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
+                            # print(f'\n{Colors.GREEN}++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}')
+                            # print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {start_shift_time:.3f}{Colors.WHITE}')
+                            # print(f'{Colors.GREEN}++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
                             # assert start_shift_time % MINUTES_PER_DAY == shift.start or start_shift_time == 0
                             # assert counsellor not in self.store_counsellors_active.items
                             yield self.store_counsellors_active.put(counsellor)
 
-                        print(f'Signed in shift:{shift.shift_name} at {start_shift_time}.'
-                            f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
-                        self.print_idle_counsellors_working()
-                        print()
+                        # print(f'Signed in shift:{shift.shift_name} at {start_shift_time}.'
+                        #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
+                        # self.print_idle_counsellors_working()
+                        # print()
 
                     yield self.env.timeout(shift_remaining) # delay for shift.start minutes
                     
@@ -745,17 +745,17 @@ class ServiceOperation:
                     counsellor_instances = [counsellor[list(counsellor)[i]] for i in range(total_procs)]
 
                     actual_end_shift_time = self.env.now
-                    for c in counsellor_instances:
-                        print(f'\n{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}')
-                        print(f'{Colors.RED}Counsellor {c.counsellor_id} signed out at t = {actual_end_shift_time:.3f}.  Overtime: {(actual_end_shift_time-scheduled_end_shift_time):.3f} minutes{Colors.WHITE}')
-                        print(f'{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}\n')
+                    # for c in counsellor_instances:
+                    #     print(f'\n{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}')
+                    #     print(f'{Colors.RED}Counsellor {c.counsellor_id} signed out at t = {actual_end_shift_time:.3f}.  Overtime: {(actual_end_shift_time-scheduled_end_shift_time):.3f} minutes{Colors.WHITE}')
+                    #     print(f'{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}\n')
                         # assert time_now % MINUTES_PER_DAY == shift.start or time_now == 0
                         # assert counsellor not in self.store_counsellors_active.items
 
-                    print(f'Signed out shift:{shift.shift_name} at {self.env.now}.'
-                        f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
-                    self.print_idle_counsellors_working()
-                    print()
+                    # print(f'Signed out shift:{shift.shift_name} at {self.env.now}.'
+                    #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
+                    # self.print_idle_counsellors_working()
+                    # print()
 
                     shift_remaining = 0 # exit loop
 
@@ -779,29 +779,29 @@ class ServiceOperation:
                     else:
                         break_duration = self.__tea_break
 
-                    for c in counsellor_instances:
-                        print(f'\n{Colors.BLUE}**************************************************************************{Colors.WHITE}')
-                        print(f'{Colors.BLUE}Counsellor {c.counsellor_id} AFK for {si.cause} at t = {self.env.now}{Colors.WHITE}')
-                        print(f'{Colors.BLUE}**************************************************************************{Colors.WHITE}\n')
+                    # for c in counsellor_instances:
+                        # print(f'\n{Colors.BLUE}**************************************************************************{Colors.WHITE}')
+                        # print(f'{Colors.BLUE}Counsellor {c.counsellor_id} AFK for {si.cause} at t = {self.env.now}{Colors.WHITE}')
+                        # print(f'{Colors.BLUE}**************************************************************************{Colors.WHITE}\n')
 
                     yield self.env.timeout(break_duration) # take a break
-                    print(f'AFK shift:{shift.shift_name}, {role} at {self.env.now}.'
-                        f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
-                    self.print_idle_counsellors_working()
-                    print()
+                    # print(f'AFK shift:{shift.shift_name}, {role} at {self.env.now}.'
+                    #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
+                    # self.print_idle_counsellors_working()
+                    # print()
 
 
                     # send counsellor back to work after break
                     for c in counsellor_instances:
-                        print(f'\n{Colors.BLUE}##########################################################################{Colors.WHITE}')
-                        print(f'{Colors.BLUE}Counsellor {c.counsellor_id} BAK from {si.cause} at t = {self.env.now}{Colors.WHITE}')
-                        print(f'{Colors.BLUE}##########################################################################{Colors.WHITE}\n')
+                        # print(f'\n{Colors.BLUE}##########################################################################{Colors.WHITE}')
+                        # print(f'{Colors.BLUE}Counsellor {c.counsellor_id} BAK from {si.cause} at t = {self.env.now}{Colors.WHITE}')
+                        # print(f'{Colors.BLUE}##########################################################################{Colors.WHITE}\n')
                         yield self.store_counsellors_active.put(c)
                             
-                    print(f'BAK shift:{shift.shift_name} at {self.env.now}.'
-                        f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
-                    self.print_idle_counsellors_working()
-                    print()
+                    # print(f'BAK shift:{shift.shift_name} at {self.env.now}.'
+                    #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
+                    # self.print_idle_counsellors_working()
+                    # print()
 
                     shift_remaining -= self.env.now - start_shift_time # update remaining shift
 
@@ -903,10 +903,10 @@ class ServiceOperation:
             start_time = self.env.now
 
             if init_flag:
-                print(f'\n{Colors.HGREEN}**************************************************************************{Colors.HEND}')
-                print(f'{Colors.HGREEN}Helpseeker -- {helpseeker_id} has just accepted TOS.  Chat session created at '
-                        f'{start_time:.3f}{Colors.HEND}')
-                print(f'{Colors.HGREEN}**************************************************************************{Colors.HEND}\n')
+                # print(f'\n{Colors.HGREEN}**************************************************************************{Colors.HEND}')
+                # print(f'{Colors.HGREEN}Helpseeker -- {helpseeker_id} has just accepted TOS.  Chat session created at '
+                #         f'{start_time:.3f}{Colors.HEND}')
+                # print(f'{Colors.HGREEN}**************************************************************************{Colors.HEND}\n')
 
                 self.helpseeker_in_system.append(helpseeker_id)
                 self.helpseeker_queue.append(helpseeker_id)
@@ -982,10 +982,10 @@ class ServiceOperation:
                 # print(f'Helpseeker in system: {self.helpseeker_in_system}')
                 time_spent_in_queue = renege_time
 
-                print(f'\n{Colors.HRED}**************************************************************************{Colors.HEND}')
-                print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
-                    f'spending t = {renege_time:.3f} minutes in the queue.{Colors.HEND}')
-                print(f'{Colors.HRED}**************************************************************************{Colors.HEND}\n')
+                # print(f'\n{Colors.HRED}**************************************************************************{Colors.HEND}')
+                # print(f'{Colors.HRED}Helpseeker {helpseeker_id} reneged after '
+                #     f'spending t = {renege_time:.3f} minutes in the queue.{Colors.HEND}')
+                # print(f'{Colors.HRED}**************************************************************************{Colors.HEND}\n')
                 self.reneged += 1 # update counter
                 counsellor.cancel() # cancel counsellor request
                 process_helpseeker = 0
@@ -998,21 +998,21 @@ class ServiceOperation:
                 counsellor_instance = results[list(results)[0]] #unpack the counsellor instance
 
                 try:
-                    print(f'\n{Colors.HGREEN}**************************************************************************{Colors.HEND}')
-                    print(f'{Colors.HGREEN}Helpseeker {helpseeker_id} is assigned to '
-                        f'{counsellor_instance.counsellor_id} at {self.env.now:.3f}{Colors.HEND}')
-                    print(f'{Colors.HGREEN}**************************************************************************{Colors.HEND}\n')
+                    # print(f'\n{Colors.HGREEN}**************************************************************************{Colors.HEND}')
+                    # print(f'{Colors.HGREEN}Helpseeker {helpseeker_id} is assigned to '
+                    #     f'{counsellor_instance.counsellor_id} at {self.env.now:.3f}{Colors.HEND}')
+                    # print(f'{Colors.HGREEN}**************************************************************************{Colors.HEND}\n')
 
                     # timeout is chat duration + 20 minutes to fill out postchat survey
                     yield self.env.timeout(process_helpseeker)
 
                     # put the counsellor back into the store, so it will be available
                     # to the next helpseeker
-                    print(f'\n{Colors.HBLUE}**************************************************************************{Colors.HEND}')
-                    print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
-                        f'{chat_duration:.3f} minutes.\nCounsellor {counsellor_instance.counsellor_id} '
-                        f'is now available at {self.env.now:.3f}.{Colors.HEND}')
-                    print(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}\n')
+                    # print(f'\n{Colors.HBLUE}**************************************************************************{Colors.HEND}')
+                    # print(f'{Colors.HBLUE}Helpseeker {helpseeker_id}\'s counselling session lasted t = '
+                    #     f'{chat_duration:.3f} minutes.\nCounsellor {counsellor_instance.counsellor_id} '
+                    #     f'is now available at {self.env.now:.3f}.{Colors.HEND}')
+                    # print(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}\n')
 
 
                     # remove helpseeker from system record
