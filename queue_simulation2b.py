@@ -49,7 +49,7 @@ MEAN_RENEGE_TIME = 2.3                      # mean patience before reneging
 MEAN_CHAT_DURATION_SOCIAL_WORKER = 52.4
 MEAN_CHAT_DURATION_DUTY_OFFICER = 58.5
 MEAN_CHAT_DURATION_VOLUNTEER = 55.7
-MEAN_CHAT_DURATION = 55
+MEAN_CHAT_DURATION = 45#55
 
 
 TEA_BREAK_DURATION = 15                     # 20 minute tea break
@@ -152,10 +152,10 @@ class SocialWorkerShifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 2)   # from 9:30pm to 7:30am
+    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 4)   # from 9:30pm to 7:30am
     AM =        ('AM',          False, 435, 915, 960, 2)    # from 7:15am to 3:15 pm
     PM =        ('PM',          False, 840, 1320, 960, 2)   # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 8)   # from 5pm to 1 am
+    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 4)   # from 5pm to 1 am
 
     def __init__(self, shift_name, is_edge_case, 
         start, end, offset,
@@ -205,10 +205,10 @@ class VolunteerShifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 2)  # from 8pm to 12am
+    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 3)  # from 8pm to 12am
     AM =        ('AM',          False, 630, 870, 1200, 2)   # from 10:30am to 2:30 pm
     PM =        ('PM',          False, 900, 1140, 1200, 2)  # from 3pm to 7pm
-    SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 10)  # from 6pm to 10pm
+    SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 4)  # from 6pm to 10pm
 
     def __init__(self, shift_name, is_edge_case, start, end, offset,
         num_workers):
