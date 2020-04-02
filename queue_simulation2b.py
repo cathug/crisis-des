@@ -721,7 +721,7 @@ class ServiceOperation:
                             # print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {start_shift_time:.3f}{Colors.WHITE}')
                             # print(f'{Colors.GREEN}++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
                             # assert start_shift_time % MINUTES_PER_DAY == shift.start or start_shift_time == 0
-                            # assert counsellor not in self.store_counsellors_active.items
+                            assert counsellor not in self.store_counsellors_active.items
                             yield self.store_counsellors_active.put(counsellor)
 
                         # print(f'Signed in shift:{shift.shift_name} at {start_shift_time}.'
@@ -745,12 +745,12 @@ class ServiceOperation:
                     counsellor_instances = [counsellor[list(counsellor)[i]] for i in range(total_procs)]
 
                     actual_end_shift_time = self.env.now
-                    # for c in counsellor_instances:
+                    for c in counsellor_instances:
                     #     print(f'\n{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}')
                     #     print(f'{Colors.RED}Counsellor {c.counsellor_id} signed out at t = {actual_end_shift_time:.3f}.  Overtime: {(actual_end_shift_time-scheduled_end_shift_time):.3f} minutes{Colors.WHITE}')
                     #     print(f'{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}\n')
                         # assert time_now % MINUTES_PER_DAY == shift.start or time_now == 0
-                        # assert counsellor not in self.store_counsellors_active.items
+                        assert counsellor not in self.store_counsellors_active.items
 
                     # print(f'Signed out shift:{shift.shift_name} at {self.env.now}.'
                     #     f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
@@ -1203,7 +1203,7 @@ def main():
     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
     # random.seed(SEED) # comment out line if not reproducing results
-    # random.seed(744)
+    random.seed(744)
 
     # # create environment
     env = simpy.Environment() 

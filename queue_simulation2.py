@@ -32,9 +32,9 @@ QUEUE_THRESHOLD = 0                         # memoize data if queue is >= thresh
 DAYS_IN_WEEK = 7                            # 7 days in a week
 MINUTES_PER_HOUR = 60                       # 60 minutes in an hour
 
-MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3    # Social Worker can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_SOCIAL_WORKER = 3    # Social Worker can process max 2 chats
 MAX_SIMULTANEOUS_CHATS_DUTY_OFFICER = 1     # Duty Officer can process max 1 chat
-MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 1        # Volunteer can process max 1 chat
+MAX_SIMULTANEOUS_CHATS_VOLUNTEER = 2        # Volunteer can process max 1 chat
 
 SEED = 728                                  # for seeding the sudo-random generator
 MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
@@ -49,7 +49,7 @@ MEAN_RENEGE_TIME = 2.3                      # mean patience before reneging
 MEAN_CHAT_DURATION_SOCIAL_WORKER = 52.4
 MEAN_CHAT_DURATION_DUTY_OFFICER = 58.5
 MEAN_CHAT_DURATION_VOLUNTEER = 55.7
-MEAN_CHAT_DURATION = 55
+MEAN_CHAT_DURATION = 45#55
 
 
 TEA_BREAK_DURATION = 15                     # 20 minute tea break
@@ -152,10 +152,10 @@ class SocialWorkerShifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 2)   # from 9:30pm to 7:30am
+    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890, 840, 4)   # from 9:30pm to 7:30am
     AM =        ('AM',          False, 435, 915, 960, 2)    # from 7:15am to 3:15 pm
     PM =        ('PM',          False, 840, 1320, 960, 2)   # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 2)   # from 5pm to 1 am
+    SPECIAL =   ('SPECIAL',     True, 1020, 1500, 960, 4)   # from 5pm to 1 am
 
     def __init__(self, shift_name, is_edge_case, 
         start, end, offset,
@@ -205,10 +205,10 @@ class VolunteerShifts(enum.Enum):
         shift start, end, and next shift offset in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 2)  # from 8pm to 12am
+    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440, 1200, 3)  # from 8pm to 12am
     AM =        ('AM',          False, 630, 870, 1200, 2)   # from 10:30am to 2:30 pm
     PM =        ('PM',          False, 900, 1140, 1200, 2)  # from 3pm to 7pm
-    SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 2)  # from 6pm to 10pm
+    SPECIAL =   ('SPECIAL',     False, 1080, 1320, 1200, 4)  # from 6pm to 10pm
 
     def __init__(self, shift_name, is_edge_case, start, end, offset,
         num_workers):
@@ -721,7 +721,7 @@ class ServiceOperation:
                             print(f'{Colors.GREEN}Counsellor {counsellor.counsellor_id} signed in at t = {start_shift_time:.3f}{Colors.WHITE}')
                             print(f'{Colors.GREEN}++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++{Colors.WHITE}\n')
                             # assert start_shift_time % MINUTES_PER_DAY == shift.start or start_shift_time == 0
-                            # assert counsellor not in self.store_counsellors_active.items
+                            assert counsellor not in self.store_counsellors_active.items
                             yield self.store_counsellors_active.put(counsellor)
 
                         print(f'Signed in shift:{shift.shift_name} at {start_shift_time}.'
@@ -750,7 +750,7 @@ class ServiceOperation:
                         print(f'{Colors.RED}Counsellor {c.counsellor_id} signed out at t = {actual_end_shift_time:.3f}.  Overtime: {(actual_end_shift_time-scheduled_end_shift_time):.3f} minutes{Colors.WHITE}')
                         print(f'{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}\n')
                         # assert time_now % MINUTES_PER_DAY == shift.start or time_now == 0
-                        # assert counsellor not in self.store_counsellors_active.items
+                        assert counsellor not in self.store_counsellors_active.items
 
                     print(f'Signed out shift:{shift.shift_name} at {self.env.now}.'
                         f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
