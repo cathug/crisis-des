@@ -78,10 +78,10 @@ MEAN_CHAT_DURATION_USER = {
 }
 
 
-TEA_BREAK_DURATION = 20                     # 20 minute tea break
+# TEA_BREAK_DURATION = 20                     # 20 minute tea break
 MEAL_BREAK_DURATION = 60                    # 60 minute meal break
-DEBRIEF_DURATION = 60                       # 60 minute debriefing session per day
-TRAINING_DURATION = 480                     # 8 hour (480 minute) training session - once per month
+# DEBRIEF_DURATION = 60                       # 60 minute debriefing session per day
+# TRAINING_DURATION = 480                     # 8 hour (480 minute) training session - once per month
 LAST_CASE_CUTOFF = 30                       # do not assign any more cases 30 minutes before signoff
 
 NUM_DUTY_OFFICERS = {
@@ -170,23 +170,27 @@ class DutyOfficerShifts(enum.Enum):
             define lunch as the midpoint of shift
             which is written to minimize underflow and overflow problems
         '''
+        if self.shift_name == 'GRAVEYARD':
+            # this is adjusted with set value of DutyOfficerShift.GRAVEYARD
+            return self.start + 240
+        # else:
         return int(self.start + (self.end - self.start) / 2) % MINUTES_PER_DAY
 
 
-    @property
-    def first_tea_start(self):
-        '''
-            first tea break two hours after the shift has started
-        '''
-        return int(self.start + 120)
+    # @property
+    # def first_tea_start(self):
+    #     '''
+    #         first tea break two hours after the shift has started
+    #     '''
+    #     return int(self.start + 120)
 
 
-    @property
-    def last_tea_start(self):
-        '''
-            tea break two hours before the shift ends
-        '''
-        return int(self.end - 120)
+    # @property
+    # def last_tea_start(self):
+    #     '''
+    #         tea break two hours before the shift ends
+    #     '''
+    #     return int(self.end - 120)
 
 
     @property
@@ -228,23 +232,27 @@ class SocialWorkerShifts(enum.Enum):
             define lunch as the midpoint of shift
             which is written to minimize underflow and overflow problems
         '''
+        if self.shift_name == 'GRAVEYARD':
+            # this is adjusted with set value of DutyOfficerShift.GRAVEYARD
+            return self.end - 180
+        # else:
         return int(self.start + (self.end - self.start) / 2) % MINUTES_PER_DAY
 
 
-    @property
-    def first_tea_start(self):
-        '''
-            first tea break two hours after the shift has started
-        '''
-        return int(self.start + 120)
+    # @property
+    # def first_tea_start(self):
+    #     '''
+    #         first tea break two hours after the shift has started
+    #     '''
+    #     return int(self.start + 120)
 
 
-    @property
-    def last_tea_start(self):
-        '''
-            tea break two hours before the shift ends
-        '''
-        return int(self.end - 120)
+    # @property
+    # def last_tea_start(self):
+    #     '''
+    #         tea break two hours before the shift ends
+    #     '''
+    #     return int(self.end - 120)
     
 #-------------------------------------------------------------------------------
 
@@ -271,12 +279,12 @@ class VolunteerShifts(enum.Enum):
     def duration(self):
         return int(self.end - self.start)
 
-    @property
-    def first_tea_start(self):
-        '''
-            tea break two hours after the shift has started
-        '''
-        return int(self.start + 120)
+    # @property
+    # def first_tea_start(self):
+    #     '''
+    #         tea break two hours after the shift has started
+    #     '''
+    #     return int(self.start + 120)
 
 #-------------------------------------------------------------------------------
 
@@ -291,10 +299,10 @@ class JobStates(enum.Enum):
     '''
 
     SIGNOUT =       ('SIGN_OUT',        10)
-    CHAT =          ('CHAT',            30)
+    # CHAT =          ('CHAT',            30)
     MEAL_BREAK =    ('MEAL_BREAK',      20)
-    FIRST_TEA =     ('FIRST_TEA_BREAK', 20)
-    LAST_TEA =      ('LAST_TEA_BREAK',  20)
+    # FIRST_TEA =     ('FIRST_TEA_BREAK', 20)
+    # LAST_TEA =      ('LAST_TEA_BREAK',  20)
 
     def __init__(self, job_name, priority):
         self.job_name = job_name
@@ -398,9 +406,9 @@ class Counsellor:
         self.env = env
         self.counsellor_id = counsellor_id
 
-        self.taken_first_tea_break = False
-        self.taken_last_tea_break = False
-        self.taken_lunch_break = False
+        # self.taken_first_tea_break = False
+        # self.taken_last_tea_break = False
+        # self.taken_lunch_break = False
         
         self.shift = shift
         self.role = role
@@ -411,17 +419,17 @@ class Counsellor:
     # Properties (for encapsulation)
     ############################################################################
 
-    @property
-    def taken_first_tea_break(self):
-        return self.__taken_first_tea_break
+    # @property
+    # def taken_first_tea_break(self):
+    #     return self.__taken_first_tea_break
 
-    @property
-    def taken_last_tea_break(self):
-        return self.__taken_last_tea_break
+    # @property
+    # def taken_last_tea_break(self):
+    #     return self.__taken_last_tea_break
 
-    @property
-    def taken_lunch_break(self):
-        return self.__taken_lunch_break
+    # @property
+    # def taken_lunch_break(self):
+    #     return self.__taken_lunch_break
 
     @property
     def client_id(self):
@@ -429,20 +437,20 @@ class Counsellor:
 
 
 
-    @taken_first_tea_break.setter
-    def taken_first_tea_break(self, value):
-        if isinstance(value, bool):
-            self.__taken_first_tea_break = value
+    # @taken_first_tea_break.setter
+    # def taken_first_tea_break(self, value):
+    #     if isinstance(value, bool):
+    #         self.__taken_first_tea_break = value
 
-    @taken_last_tea_break.setter
-    def taken_last_tea_break(self, value):
-        if isinstance(value, bool):
-            self.__taken_last_tea_break = value
+    # @taken_last_tea_break.setter
+    # def taken_last_tea_break(self, value):
+    #     if isinstance(value, bool):
+    #         self.__taken_last_tea_break = value
 
-    @taken_lunch_break.setter
-    def taken_lunch_break(self, value):
-        if isinstance(value, bool):
-            self.__taken_lunch_break = value
+    # @taken_lunch_break.setter
+    # def taken_lunch_break(self, value):
+    #     if isinstance(value, bool):
+    #         self.__taken_lunch_break = value
 
     @client_id.setter
     def client_id(self, value):
@@ -450,9 +458,9 @@ class Counsellor:
             self.__client_id = value
 
     def reset(self):
-        self.taken_first_tea_break = False
-        self.taken_last_tea_break = False
-        self.taken_lunch_break = False
+        # self.taken_first_tea_break = False
+        # self.taken_last_tea_break = False
+        # self.taken_lunch_break = False
         self.client_id = None
 
 #--------------------------------------------------------end of Counsellor class
@@ -469,7 +477,7 @@ class ServiceOperation:
     def __init__(self, *, env, 
         postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
         mean_renege_time=MEAN_RENEGE_TIME,
-        tea_break_duration=TEA_BREAK_DURATION,
+        # tea_break_duration=TEA_BREAK_DURATION,
         meal_break_duration=MEAL_BREAK_DURATION,
         # training_duration=TRAINING_DURATION
         ):
@@ -499,7 +507,7 @@ class ServiceOperation:
 
         self.__counsellor_postchat_survey = postchat_fillout_time
         self.__mean_renege_time = mean_renege_time
-        self.__tea_break = tea_break_duration
+        # self.__tea_break = tea_break_duration
         self.__meal_break = meal_break_duration
         # self.__training_duration = training_duration
 
@@ -610,13 +618,24 @@ class ServiceOperation:
             self.counsellors_signout(s, Roles.VOLUNTEER) ) for s in VolunteerShifts}
 
 
-        # # set up meal breaks
-        # self.meal_break_processes[Roles.SOCIAL_WORKER] = {s: self.env.process(
-        #     self.counsellors_break(s, Roles.SOCIAL_WORKER, JobStates.MEAL_BREAK) )
-        #     for s in SocialWorkerShifts}
-        # self.meal_break_processes[Roles.DUTY_OFFICER] = {s: self.env.process(
-        #     self.counsellors_break(s, Roles.DUTY_OFFICER, JobStates.MEAL_BREAK) )
-        #     for s in DutyOfficerShifts}
+        # set up meal breaks
+        self.meal_break_processes[Roles.SOCIAL_WORKER] = {s: self.env.process(
+            self.counsellors_break_start(s, Roles.SOCIAL_WORKER) )
+            for s in SocialWorkerShifts}
+
+        self.meal_break_processes[Roles.SOCIAL_WORKER] = {s: self.env.process(
+            self.counsellors_break_end(s, Roles.SOCIAL_WORKER) )
+            for s in SocialWorkerShifts}
+
+
+        self.meal_break_processes[Roles.DUTY_OFFICER] = {s: self.env.process(
+            self.counsellors_break_start(s, Roles.DUTY_OFFICER) )
+            for s in DutyOfficerShifts}
+
+        self.meal_break_processes[Roles.DUTY_OFFICER] = {s: self.env.process(
+            self.counsellors_break_end(s, Roles.DUTY_OFFICER) )
+            for s in DutyOfficerShifts}
+
 
 
         # set up tea breaks and meal breaks
@@ -853,6 +872,119 @@ class ServiceOperation:
             # repeat every 24 hours - overtime
             yield self.env.timeout(MINUTES_PER_DAY)
 
+    #---------------------------------------------------------------------------
+
+    def get_break_states(self, shift, role):
+        '''
+            helper function to return break start time and duration by break type
+        '''
+
+        if break_type is JobStates.MEAL_BREAK:
+            return shift.meal_start, self.__meal_break # wait until start of shift to begin shift
+        elif break_type is JobStates.FIRST_TEA:
+            return shift.first_tea_start, self.__tea_break
+        elif break_type is JobStates.LAST_TEA and role is Roles.VOLUNTEER:
+            return shift.last_tea_start, self.__tea_break
+        else:
+            return None, None
+
+    #---------------------------------------------------------------------------
+
+    def counsellors_break_start(self, shift, role):
+        '''
+            routine to start a meal break
+
+            param:
+            shift - one of Shifts enum
+            role - one of Roles enum
+        '''
+
+        total_procs = shift.num_workers * role.num_processes
+
+        # delay until meal break starts
+        yield self.env.timeout(shift.meal_start)
+
+        while True:
+
+            counsellors_still_serving = set(self.counsellors[shift]).difference(
+                set(self.store_counsellors_active.items) )
+            if len(counsellors_still_serving) > 0:
+                logging.debug(f'{Colors.BLUE}--------------INCOMPLETE {shift} {self.env.now} ({self.env.now%MINUTES_PER_DAY})--------------{Colors.WHITE}')
+                # logging.debug([c.counsellor_id for c in self.counsellors[shift]])
+                logging.debug([c.counsellor_id for c in counsellors_still_serving])
+                self.log_idle_counsellors_working()
+
+                try:
+                    self.user_procs.interrupt((JobStates.MEAL_BREAK, counsellors_still_serving) ) # throw an interrupt
+                    logging.debug(f'{Colors.RED}@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@{Colors.WHITE}')
+                    logging.debug(f'@@@@ Interrupt user process handled by {counsellors_still_serving} @@@@')
+                    logging.debug(f'{Colors.RED}@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@{Colors.WHITE}')
+                except RuntimeError:
+                    logging.debug(f'{Colors.BLUE}@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@{Colors.WHITE}')
+                    logging.debug(f'@@@@ Cannot interrupt user process handled by {counsellors_still_serving} as it is already completed. @@@@')
+                    logging.debug(f'{Colors.BLUE}@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@{Colors.WHITE}')
+                
+            total_procs_remaining = total_procs - len(counsellors_still_serving)
+            counsellor_procs = [self.store_counsellors_active.get(
+                lambda x: x.shift is shift and x.role is role)
+                for _ in range(total_procs_remaining)]
+
+            # wait for all procs
+            counsellor = yield AllOf(self.env, counsellor_procs)
+            counsellor_instances = [counsellor[list(counsellor)[i]] for i in range(total_procs_remaining)]
+
+            break_init_time = self.env.now
+
+            for c in counsellor_instances:
+                c.reset() # set break flags
+                logging.debug(f'{Colors.BLUE}**************************************************************************{Colors.WHITE}')
+                logging.debug(f'{Colors.BLUE}Counsellor {c.counsellor_id} AFK at t = {break_init_time:.3f} ({break_init_time%MINUTES_PER_DAY:.3f}).{Colors.WHITE}')
+                logging.debug(f'{Colors.BLUE}**************************************************************************{Colors.WHITE}\n')
+
+                # assert end_shift_time % MINUTES_PER_DAY == shift.start or end_shift_time == 0
+                # assert c not in self.store_counsellors_active.items            
+
+            logging.debug(f'Shift {shift.shift_name} taking meal break at {break_init_time}({int((int(break_init_time)%MINUTES_PER_DAY)/60)%24}).'
+                f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:\n')
+            self.log_idle_counsellors_working()
+
+            # repeat every 24 hours
+            yield self.env.timeout(MINUTES_PER_DAY)
+
+    #---------------------------------------------------------------------------
+
+    def counsellors_break_end(self, shift, role):
+        '''
+            handle to end the meal_break
+
+            param:
+            shift - one of Shifts enum
+            role - one of Roles enum
+        '''
+
+        # delay until meal break starts
+        yield self.env.timeout(shift.meal_start + self.__meal_break)
+
+        while True:
+            end_break_time = self.env.now
+
+            for counsellor in self.counsellors[shift]:
+                yield self.store_counsellors_active.put(counsellor)
+
+                logging.debug(f'{Colors.BLUE}##########################################################################{Colors.WHITE}')
+                logging.debug(f'{Colors.BLUE}Counsellor {counsellor.counsellor_id} BAK at t = {end_break_time}({end_break_time%MINUTES_PER_DAY:.3f}){Colors.WHITE}')
+                logging.debug(f'{Colors.BLUE}##########################################################################{Colors.WHITE}\n')
+                
+                # assert start_shift_time % MINUTES_PER_DAY == shift.start or start_shift_time == 0
+                # assert counsellor in self.store_counsellors_active.items
+
+            logging.debug(f'Shift {shift.shift_name} resumed at {end_break_time}({int(((end_break_time)%MINUTES_PER_DAY)//60)%24}).'
+                f'  There are {len(self.store_counsellors_active.items)} idle SO counsellor processes:')
+            self.log_idle_counsellors_working()
+
+            # repeat every 24 hours
+            yield self.env.timeout(MINUTES_PER_DAY) 
+
     ############################################################################
     # user related functions
     ############################################################################
@@ -878,13 +1010,14 @@ class ServiceOperation:
 
                 except simpy.Interrupt as si:
                     # find the job
-                    if isinstance(si.cause, tuple) and si.cause[0] is JobStates.SIGNOUT:
+                    if isinstance(si.cause, tuple) and si.cause[0] in [JobStates.SIGNOUT, JobStates.MEAL_BREAK]:
                         counsellors_to_sign_out = si.cause[-1]
+                        cause = si.cause[0]
 
                         for c in counsellors_to_sign_out:
                             if c.client_id is not None:
                                 try:
-                                    self.user_handler[c.client_id].interrupt((JobStates.SIGNOUT, c) )
+                                    self.user_handler[c.client_id].interrupt((cause, c) )
                                 except RuntimeError:
                                     logging.debug(f'{Colors.BLUE}**************************************************************************{Colors.HEND}')
                                     logging.debug(f'{Colors.BLUE}User {c.client_id} process cannot be interrupted{Colors.HEND}')
@@ -1093,8 +1226,12 @@ class ServiceOperation:
 
                 except simpy.Interrupt as si:
                     transfer_flag = True
-                    if isinstance(si.cause, tuple) and si.cause[0] is JobStates.SIGNOUT:
+                    if isinstance(si.cause, tuple) and si.cause[0] in [JobStates.SIGNOUT, JobStates.MEAL_BREAK]:
                         counsellor_to_sign_out = si.cause[-1]
+                        if si.cause == JobStates.SIGNOUT:
+                            status = 'signed out'
+                        else: # if JobStates.MEAL_BREAK
+                            status = 'taking a break (AFK)'
 
                         if counsellor_instance is counsellor_to_sign_out:
                             logging.debug(f'{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}')
@@ -1105,7 +1242,7 @@ class ServiceOperation:
 
                             logging.debug(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}')
                             logging.debug(f'{Colors.HBLUE}Counsellor {counsellor_instance.counsellor_id} left User {user_id}\'s\n'
-                                f'counselling session and signed out at {self.env.now:.3f} ({self.env.now%MINUTES_PER_DAY:.3f}).\n'
+                                f'counselling session and {status} at {self.env.now:.3f} ({self.env.now%MINUTES_PER_DAY:.3f}).\n'
                                 f'The session lasted {chat_duration:.3f} minutes.\n\n'
                                 f'Transferring User {user_id} to another counsellor.{Colors.HEND}')
                             logging.debug(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}\n')
