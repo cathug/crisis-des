@@ -1,9 +1,11 @@
 *.png
-Untitled.ipynb
-untitled.py
+Untitl*.ipynb
+untitl*.py
 test.py
 test2.py
 debug.log
 __pycache__
 .ipynb_checkpoints
 openup_generate_interarrivals.ipynb
+queue_simulation2.ipynb
+employee_scheduling.py

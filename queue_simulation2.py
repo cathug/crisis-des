@@ -55,7 +55,12 @@ SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes
                                             #     per day * num days in month
 
 POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
-MEAN_RENEGE_TIME = 2.3                      # mean patience before reneging
+
+
+# also see assign_renege_time() in ServiceOperation class with regards
+# to specification of renege parameters 
+MEAN_LOG_RENEGE_TIME = 2.72                 # mean of natural log of patience before reneging
+SD_LOG_RENEGE_TIME = .856                   # sd of natural log of patience before reneging
 
 
 # counsellor average chat no longer than 60 minutes
@@ -68,10 +73,17 @@ MEAN_CHAT_DURATION_COUNSELLOR = {
 
 
 MEAN_CHAT_DURATION_USER = {
-    'CRISIS': 112.3,                        # Crisis - average 112.3 minutes
-    'HIGH': 113.0,                          # High - average 113 minutes
+    'CRISIS': 105.1,                        # Crisis and High combined to give
+    'HIGH': 105.1,                          #     average 105.1 minutes 
     'MEDIUM': 75.7,                         # Medium - average 75.7 minutes
-    'LOW': 53.4,                            # Low - average 51.4 minutes
+    'LOW': 53.8,                            # Low - average 53.8 minutes
+}
+
+SD_CHAT_DURATION_USER = {
+    'CRISIS': 72.3,                         # Crisis and High combined to give
+    'HIGH': 72.3,                           #     sd 72.3 minutes 
+    'MEDIUM': 46.2,                         # Medium - sd 46.2 minutes
+    'LOW': 40.7,                            # Low - sd 40.7 minutes
 }
 
 
@@ -116,6 +128,8 @@ NUM_VOLUNTEERS = {
     'PM': 2,
     'SPECIAL': 4
 }
+
+MAX_CHAT_DURATION = 60 * 11 # longest chat duration is 11 hours (from OpenUp 1.0)
 
 ################################################################################
 # Enums and constants
@@ -276,6 +290,7 @@ class Risklevels(enum.Enum):
         self.p_non_repeated_user = p_non_repeated_user
         self.p_repeated_user = p_repeated_user
         self.mean_chat_duration  = MEAN_CHAT_DURATION_USER.get(risk)
+        self.variance_chat_duration = SD_CHAT_DURATION_USER.get(risk) ** 2
         
 #-------------------------------------------------------------------------------
 
@@ -371,7 +386,8 @@ class ServiceOperation:
 
     def __init__(self, *, env, 
         postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
-        mean_renege_time=MEAN_RENEGE_TIME):
+        mean_log_renege_time=MEAN_LOG_RENEGE_TIME,
+        sd_log_renege_time=SD_LOG_RENEGE_TIME,):
 
         '''
             init function
@@ -382,13 +398,17 @@ class ServiceOperation:
                 postchat_fillout_time - Time alloted to complete the counsellor postchat
                     if not specified, defaults to POSTCHAT_FILLOUT_TIME
 
-                mean_renege_time - Mean renege time in minutes.
+                mean_log_renege_time - Mean renege time in minutes.
                     If not specified, defaults to MEAN_RENEGE_TIME
+
+                sd_log_renege_time  - sd renege time in minutes
+                    If not specified, defaults to SD_LOG_RENEGE_TIME
         '''
         self.env = env
 
         self.__counsellor_postchat_survey = postchat_fillout_time
-        self.__mean_renege_time = mean_renege_time
+        self.__mean_log_renege_time = mean_log_renege_time
+        self.__sd_log_renege_time = sd_log_renege_time
 
         # set interarrivals (a circular array of interarrival times)
         self.__mean_interarrival_time = self.read_interarrivals_csv()
@@ -415,6 +435,7 @@ class ServiceOperation:
         self.queue_status = []
         self.queue_time_stats = []
         self.renege_time_stats = []
+        self.case_chat_time = []
 
         self.num_available_counsellor_processes = []
 
@@ -486,6 +507,10 @@ class ServiceOperation:
     def served_g_regular(self):
         return self.__served_g_regular
 
+    @property
+    def case_chat_time(self):
+        return self.__case_chat_time
+
     @user_queue_max_length.setter
     def user_queue_max_length(self, value):
         self.__user_queue_max_length = value
@@ -510,6 +535,10 @@ class ServiceOperation:
     @served_g_regular.setter
     def served_g_regular(self, value):
         self.__served_g_regular = value
+
+    @case_chat_time.setter
+    def case_chat_time(self, value):
+        self.__case_chat_time = value
 
     ############################################################################
     # counsellor related functions
@@ -686,7 +715,7 @@ class ServiceOperation:
         '''
 
         # lambda filters
-        def case_cutoff(x, duration):
+        def case_cutoff(x):
             '''
                 lambda filter for case cutoff (limiting overtime)
                 Conditionals make sure edge cases 
@@ -696,9 +725,9 @@ class ServiceOperation:
 
             shift_end = CURRENT_SHIFT_END.get(x.shift.shift_name)
             if shift_end is not None:
-                diff = CURRENT_SHIFT_END.get(x.shift.shift_name) - (current_time + duration)
+                diff = shift_end - current_time
             else:
-                diff = - (current_time + duration)
+                diff = -current_time
             return diff > LAST_CASE_CUTOFF
 
 
@@ -707,16 +736,18 @@ class ServiceOperation:
                 lambda filter for get_counsellor
             '''
             if risk in [Risklevels.HIGH, Risklevels.CRISIS]:
+                if x.shift.shift_name == 'GRAVEYARD':
+                     return x.role in [Roles.DUTY_OFFICER, Roles.SOCIAL_WORKER]
+                # otherwise
                 return x.role is Roles.DUTY_OFFICER
-                # return x.role in [Roles.DUTY_OFFICER, Roles.SOCIAL_WORKER]
-            else:
-                return x.role in [Roles.SOCIAL_WORKER, Roles.VOLUNTEER]
-
+            # else:
+            return x.role in [Roles.SOCIAL_WORKER, Roles.VOLUNTEER]
 
         renege_time = self.assign_renege_time()
         user_status = self.assign_user_status()
         risklevel = self.assign_risklevel(user_status)
-        chat_duration = self.assign_chat_duration(risklevel.mean_chat_duration)
+        chat_duration = self.assign_chat_duration(
+            risklevel.mean_chat_duration, risklevel.variance_chat_duration)
         process_user = chat_duration + self.__counsellor_postchat_survey # total time to process user
         init_flag = True
 
@@ -737,7 +768,7 @@ class ServiceOperation:
             # get only counsellors matching risklevel to role
             # and remaining shift > LAST_CASE_CUTOFF
             counsellor = self.store_counsellors_active.get(
-                lambda x: case_cutoff(x, chat_duration) and get_counsellor(x, risklevel)
+                lambda x: case_cutoff(x) and get_counsellor(x, risklevel)
             )
 
             results = yield counsellor | self.env.timeout(renege_time)
@@ -745,21 +776,21 @@ class ServiceOperation:
             # record the time spent in the queue
             current_time = self.env.now
             time_spent_in_queue = current_time - start_time
+            current_day_minutes = int(current_time) % MINUTES_PER_DAY
+            weekday = int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK
+            hour = int(current_day_minutes / MINUTES_PER_HOUR)
             if counsellor in results:    
-                current_day_minutes = int(current_time) % MINUTES_PER_DAY
-                self.queue_time_stats.append(
-                    (f'weekday:{int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK}',
-                    f'hour:{int(current_day_minutes / MINUTES_PER_HOUR)}',
-                    f'time_spent_in_queue:{time_spent_in_queue}')
-                )
+                self.queue_time_stats.append({
+                    'weekday': weekday,
+                    'hour': hour,
+                    'time_spent_in_queue': time_spent_in_queue,
+                })
             else:
-                current_day_minutes = int(current_time) % MINUTES_PER_DAY
-                self.renege_time_stats.append(
-                    (f'weekday:{int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK}',
-                    f'hour:{int(current_day_minutes / MINUTES_PER_HOUR)}',
-                    f'time_spent_in_queue:{renege_time}')
-                )
-
+                self.renege_time_stats.append({
+                    'weekday': weekday,
+                    'hour': hour,
+                    'time_spent_in_queue': renege_time,
+                })
 
             # dequeue user in the waiting queue
             self.user_queue.remove(user_id) 
@@ -778,15 +809,20 @@ class ServiceOperation:
             if current_user_queue_length >= QUEUE_THRESHOLD:
                 current_time = self.env.now
                 current_day_minutes = int(current_time) % MINUTES_PER_DAY
-                logging.debug(f'weekday: {int(current_time / MINUTES_PER_DAY)} - hour: '
-                    f'{int(current_day_minutes / 60)}, Queue Length: '
-                    f'{current_user_queue_length}')
+                weekday = int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK
+                hour = int(current_day_minutes / MINUTES_PER_HOUR)
 
-                self.queue_status.append(
-                    (f'weekday:{int(current_time / MINUTES_PER_DAY) % DAYS_IN_WEEK}',
-                    f'hour:{int(current_day_minutes / MINUTES_PER_HOUR)}',
-                    f'queue_length:{current_user_queue_length}'
-                ))  
+                logging.debug(
+                    f'Weekday: {weekday} - '
+                    f'Hour: {hour}, '
+                    f'Queue Length: {current_user_queue_length}'
+                )
+
+                self.queue_status.append({
+                    'weekday': weekday,
+                    'hour': hour,
+                    'queue_length': current_user_queue_length
+                })
 
             logging.debug(f'Current User Queue contains: {self.user_queue}')
 
@@ -850,7 +886,9 @@ class ServiceOperation:
                     else:
                         self.served_g_regular += 1
 
+                    self.case_chat_time.append(process_user - self.__counsellor_postchat_survey)
                     process_user = 0
+
 
                 except simpy.Interrupt as si:
                     process_user -= self.env.now - start_time
@@ -904,29 +942,46 @@ class ServiceOperation:
     def assign_renege_time(self):
         '''
             Getter to assign patience to user
-            user patience follows an exponential distribution
+            user patience follows a log normal distribution
 
-            returns - renege time (an integer to prevent overflow/underflow problems)
+            The python lognormal pdf implementation is parametrized with 
+            sigma (standard deviation) and mu (mean) of the NORMAL distribution,
+            This means taking the mean and sd of natural log of the renege data
+            is needed.
+
+            For details please see
+            https://github.com/python/cpython/blob/master/Lib/random.py
+
+            returns - renege time
         '''
-        lambda_renege = 1.0 / self.__mean_renege_time
-        # return int(round(random.expovariate(lambda_renege), 2) )
-        return random.expovariate(lambda_renege)
+        return random.lognormvariate(
+            self.__mean_log_renege_time, self.__sd_log_renege_time)
 
     #---------------------------------------------------------------------------
 
-    def assign_chat_duration(self, mean_chat_duration):
+    def assign_chat_duration(self, mean_chat_duration, variance_chat_duration):
         '''
             Getter to assign chat duration
-            chat duration follows the gamma distribution (exponential if a=1)
+            chat duration follows the gamma distribution
+            with alpha and beta values derived from mean and variance
+            in the OpenUp MCCIS data
 
-            param: mean_chat_duration - mean chat duration in seconds (integer)
+            The python gamma pdf is parametrized with a shape parameter 
+            alpha (k) and a scale parameter beta (theta)
 
-            returns - chat duration (an integer to prevent overflow/underflow problems)
+            param:  mean_chat_duration - mean chat duration in seconds
+                    variance_chat_duration - chat duration variance
+
+            returns - chat duration or MAX_CHAT_DURATION if chat time has exceeded
+                service standards
         '''
-        lambda_chat_duration = 1.0 / mean_chat_duration
-        return random.expovariate(lambda_chat_duration)
-        # return int(round(random.expovariate(lambda_chat_duration), 2) )
-        # return random.gammavariate(2, lambda_chat_duration)
+        alpha = (mean_chat_duration ** 2) / variance_chat_duration
+        beta = variance_chat_duration / mean_chat_duration
+        duration = random.gammavariate(alpha, beta)
+        if duration < MAX_CHAT_DURATION:
+            return duration
+        # otherwise
+        return MAX_CHAT_DURATION
 
     #---------------------------------------------------------------------------
 

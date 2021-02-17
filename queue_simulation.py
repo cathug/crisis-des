@@ -58,7 +58,12 @@ SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes
                                             #     per day * num days in month
 
 POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
-MEAN_RENEGE_TIME = 2.3                      # mean patience before reneging
+
+
+# also see assign_renege_time() in ServiceOperation class with regards
+# to specification of renege parameters 
+MEAN_LOG_RENEGE_TIME = 2.72                 # mean of natural log of patience before reneging
+SD_LOG_RENEGE_TIME = .856                   # sd of natural log of patience before reneging
 
 
 # counsellor average chat no longer than 60 minutes
@@ -71,17 +76,21 @@ MEAN_CHAT_DURATION_COUNSELLOR = {
 
 
 MEAN_CHAT_DURATION_USER = {
-    'CRISIS': 112.3,                        # Crisis - average 112.3 minutes
-    'HIGH': 113.0,                          # High - average 113 minutes
+    'CRISIS': 105.1,                        # Crisis and High combined to give
+    'HIGH': 105.1,                          #     average 105.1 minutes 
     'MEDIUM': 75.7,                         # Medium - average 75.7 minutes
-    'LOW': 53.4,                            # Low - average 51.4 minutes
+    'LOW': 53.8,                            # Low - average 53.8 minutes
+}
+
+SD_CHAT_DURATION_USER = {
+    'CRISIS': 72.3,                         # Crisis and High combined to give
+    'HIGH': 72.3,                           #     sd 72.3 minutes 
+    'MEDIUM': 46.2,                         # Medium - sd 46.2 minutes
+    'LOW': 40.7,                            # Low - sd 40.7 minutes
 }
 
 
-# TEA_BREAK_DURATION = 20                     # 20 minute tea break
 MEAL_BREAK_DURATION = 60                    # 60 minute meal break
-# DEBRIEF_DURATION = 60                       # 60 minute debriefing session per day
-# TRAINING_DURATION = 480                     # 8 hour (480 minute) training session - once per month
 LAST_CASE_CUTOFF = 30                       # do not assign any more cases 30 minutes before signoff
 
 NUM_DUTY_OFFICERS = {
@@ -105,7 +114,8 @@ NUM_VOLUNTEERS = {
     'SPECIAL': 4
 }
 
-LEN_CIRCULAR_ARRAY = 10000
+LEN_CIRCULAR_ARRAY = 2000                   # length of circular array
+MAX_CHAT_DURATION = 60 * 11                 # longest chat duration is 11 hours (from OpenUp 1.0)
 
 ################################################################################
 # Enums and constants
@@ -135,29 +145,18 @@ class DutyOfficerShifts(enum.Enum):
         shift start, end in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',
-        True, 1290, 1890, 1290, 30, 435, 15) # from 9:30pm to 7:30am
-    AM =        ('AM',
-        False, 435, 915, 435, 15, 840, 15)   # from 7:15am to 3:15 pm
-    PM =        ('PM',
-        False, 840, 1320, 840, 15, 1290, 30)  # from 2pm to 10pm
-    SPECIAL =   ('SPECIAL',
-        True, 1020, 1500, None, None, None, None) # from 5pm to 1 am
+    GRAVEYARD = ('GRAVEYARD',   True, 1290, 1890)   # from 9:30pm to 7:30am
+    AM =        ('AM',          False, 435, 915)    # from 7:15am to 3:15 pm
+    PM =        ('PM',          False, 840, 1320)   # from 2pm to 10pm
+    SPECIAL =   ('SPECIAL',     True, 1020, 1500)   # from 5pm to 1 am
 
-    def __init__(self, shift_name, is_edge_case,
-        start, end,
-        first_debriefing, first_debriefing_duration,
-        last_debriefing, last_debriefing_duration):
+    def __init__(self, shift_name, is_edge_case, start, end):
 
         self.shift_name = shift_name
         self.is_edge_case = is_edge_case
         self.start = start
         self.end = end
         self.num_workers = NUM_DUTY_OFFICERS.get(shift_name)
-        self.first_debriefing = first_debriefing
-        self.first_debriefing_duration = first_debriefing_duration
-        self.last_debriefing = last_debriefing
-        self.last_debriefing_duration = last_debriefing_duration
 
     @property
     def duration(self):
@@ -172,33 +171,9 @@ class DutyOfficerShifts(enum.Enum):
         '''
         if self.shift_name == 'GRAVEYARD':
             # this is adjusted with set value of DutyOfficerShift.GRAVEYARD
-            return self.start + 240
+            return self.start + 240 - 15 # 1:15am
         # else:
         return int(self.start + (self.end - self.start) / 2) % MINUTES_PER_DAY
-
-
-    # @property
-    # def first_tea_start(self):
-    #     '''
-    #         first tea break two hours after the shift has started
-    #     '''
-    #     return int(self.start + 120)
-
-
-    # @property
-    # def last_tea_start(self):
-    #     '''
-    #         tea break two hours before the shift ends
-    #     '''
-    #     return int(self.end - 120)
-
-
-    @property
-    def total_debriefing_duration(self):
-        '''
-            total debriefing duration
-        '''
-        return first_debriefing_duration + last_debriefing_duration
 
 #-------------------------------------------------------------------------------
 
@@ -234,25 +209,9 @@ class SocialWorkerShifts(enum.Enum):
         '''
         if self.shift_name == 'GRAVEYARD':
             # this is adjusted with set value of DutyOfficerShift.GRAVEYARD
-            return self.end - 180
+            return self.end - 180 - 15 # so wakes up at 7:15am
         # else:
         return int(self.start + (self.end - self.start) / 2) % MINUTES_PER_DAY
-
-
-    # @property
-    # def first_tea_start(self):
-    #     '''
-    #         first tea break two hours after the shift has started
-    #     '''
-    #     return int(self.start + 120)
-
-
-    # @property
-    # def last_tea_start(self):
-    #     '''
-    #         tea break two hours before the shift ends
-    #     '''
-    #     return int(self.end - 120)
     
 #-------------------------------------------------------------------------------
 
@@ -262,9 +221,9 @@ class VolunteerShifts(enum.Enum):
         shift start, end in minutes
     '''
 
-    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440)  # from 8pm to 12am
-    AM =        ('AM',          False, 630, 870)   # from 10:30am to 2:30 pm
-    PM =        ('PM',          False, 900, 1140)  # from 3pm to 7pm
+    GRAVEYARD = ('GRAVEYARD',   True, 1200, 1440)   # from 8pm to 12am
+    AM =        ('AM',          False, 630, 870)    # from 10:30am to 2:30 pm
+    PM =        ('PM',          False, 900, 1140)   # from 3pm to 7pm
     SPECIAL =   ('SPECIAL',     False, 1080, 1320)  # from 6pm to 10pm
 
     def __init__(self, shift_name, is_edge_case, start, end):
@@ -279,33 +238,25 @@ class VolunteerShifts(enum.Enum):
     def duration(self):
         return int(self.end - self.start)
 
-    # @property
-    # def first_tea_start(self):
-    #     '''
-    #         tea break two hours after the shift has started
-    #     '''
-    #     return int(self.start + 120)
-
 #-------------------------------------------------------------------------------
 
 class JobStates(enum.Enum):
     '''
         Counsellor in three states:
-        counselling, eating lunch, and adhoc duties,
+        counselling, eating lunch, and signout,
         each of which are given different priorities (must be integers)
 
         The higher the priority, the lower the value 
         (10 has higher priority than 20)
     '''
 
-    SIGNOUT =       ('SIGN_OUT',        10)
+    SIGNOUT =       ('SIGN_OUT', 'signed out',              10)
     # CHAT =          ('CHAT',            30)
-    MEAL_BREAK =    ('MEAL_BREAK',      20)
-    # FIRST_TEA =     ('FIRST_TEA_BREAK', 20)
-    # LAST_TEA =      ('LAST_TEA_BREAK',  20)
+    MEAL_BREAK =    ('MEAL_BREAK', 'taking a break (AFK)',  20)
 
-    def __init__(self, job_name, priority):
+    def __init__(self, job_name, status, priority):
         self.job_name = job_name
+        self.status = status
         self.priority = priority
 
 #-------------------------------------------------------------------------------
@@ -326,6 +277,7 @@ class Risklevels(enum.Enum):
         self.p_non_repeated_user = p_non_repeated_user
         self.p_repeated_user = p_repeated_user
         self.mean_chat_duration  = MEAN_CHAT_DURATION_USER.get(risk)
+        self.variance_chat_duration = SD_CHAT_DURATION_USER.get(risk) ** 2
         
 #-------------------------------------------------------------------------------
 
@@ -405,52 +357,18 @@ class Counsellor:
 
         self.env = env
         self.counsellor_id = counsellor_id
-
-        # self.taken_first_tea_break = False
-        # self.taken_last_tea_break = False
-        # self.taken_lunch_break = False
         
         self.shift = shift
         self.role = role
         self.client_id = None
-        # self.priority = None # to be set later
 
     ############################################################################
     # Properties (for encapsulation)
     ############################################################################
 
-    # @property
-    # def taken_first_tea_break(self):
-    #     return self.__taken_first_tea_break
-
-    # @property
-    # def taken_last_tea_break(self):
-    #     return self.__taken_last_tea_break
-
-    # @property
-    # def taken_lunch_break(self):
-    #     return self.__taken_lunch_break
-
     @property
     def client_id(self):
         return self.__client_id
-
-
-
-    # @taken_first_tea_break.setter
-    # def taken_first_tea_break(self, value):
-    #     if isinstance(value, bool):
-    #         self.__taken_first_tea_break = value
-
-    # @taken_last_tea_break.setter
-    # def taken_last_tea_break(self, value):
-    #     if isinstance(value, bool):
-    #         self.__taken_last_tea_break = value
-
-    # @taken_lunch_break.setter
-    # def taken_lunch_break(self, value):
-    #     if isinstance(value, bool):
-    #         self.__taken_lunch_break = value
 
     @client_id.setter
     def client_id(self, value):
@@ -458,9 +376,6 @@ class Counsellor:
             self.__client_id = value
 
     def reset(self):
-        # self.taken_first_tea_break = False
-        # self.taken_last_tea_break = False
-        # self.taken_lunch_break = False
         self.client_id = None
 
 #--------------------------------------------------------end of Counsellor class
@@ -476,10 +391,9 @@ class ServiceOperation:
 
     def __init__(self, *, env, 
         postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
-        mean_renege_time=MEAN_RENEGE_TIME,
-        # tea_break_duration=TEA_BREAK_DURATION,
+        mean_log_renege_time=MEAN_LOG_RENEGE_TIME,
+        sd_log_renege_time=SD_LOG_RENEGE_TIME,
         meal_break_duration=MEAL_BREAK_DURATION,
-        # training_duration=TRAINING_DURATION
         ):
 
         '''
@@ -491,25 +405,24 @@ class ServiceOperation:
                 postchat_fillout_time - Time alloted to complete the counsellor postchat
                     if not specified, defaults to POSTCHAT_FILLOUT_TIME
 
-                mean_renege_time - Mean renege time in minutes.
-                    If not specified, defaults to MEAN_RENEGE_TIME
+                mean_log_renege_time - Mean renege time in minutes.
+                    If not specified, defaults to MEAN_LOG_RENEGE_TIME
+
+                sd_log_renege_time  - sd renege time in minutes
+                    If not specified, defaults to SD_LOG_RENEGE_TIME
 
                 tea_break_duration - Tea break duration in minutes.
                     If not specified, defaults to NUM_TEA_BREAKS
 
                 meal_break_duration - Meal break duration in minutes.
                     If not specified, defaults to MEAL_BREAK_DURATION
-
-                training_duration - duration of training session
-                    If not specified, defaults to TRAINING_DURATION
         '''
         self.env = env
 
-        self.__counsellor_postchat_survey = postchat_fillout_time
-        self.__mean_renege_time = mean_renege_time
-        # self.__tea_break = tea_break_duration
+        self.__counsellor_postchat_survey_time = postchat_fillout_time
+        self.__mean_log_renege_time = mean_log_renege_time
+        self.__sd_log_renege_time = sd_log_renege_time
         self.__meal_break = meal_break_duration
-        # self.__training_duration = training_duration
 
         # set interarrivals (a circular array of interarrival times)
         self.__mean_interarrival_time = self.read_interarrivals_csv()
@@ -537,6 +450,7 @@ class ServiceOperation:
         self.queue_status = []
         self.queue_time_stats = []
         self.renege_time_stats = []
+        self.case_chat_time = []
 
         self.num_available_counsellor_processes = []
 
@@ -565,8 +479,6 @@ class ServiceOperation:
 
         # # other processes to interrupt the main process
         self.meal_break_processes = {} 
-        # self.first_tea_break_processes = {}
-        # self.last_tea_break_processes = {}
         
 
         # service operation is given an infinite counsellor intake capacity
@@ -637,28 +549,6 @@ class ServiceOperation:
             for s in DutyOfficerShifts}
 
 
-
-        # set up tea breaks and meal breaks
-        # paid counsellors get two tea breaks
-        # volunteers get one tea break
-        # self.first_tea_break_processes[Roles.SOCIAL_WORKER] = {s:self.env.process(
-        #     self.counsellors_break(s, Roles.SOCIAL_WORKER, JobStates.FIRST_TEA) )
-        #     for s in SocialWorkerShifts}
-        # self.first_tea_break_processes[Roles.DUTY_OFFICER] = {s:self.env.process(
-        #     self.counsellors_break(s, Roles.DUTY_OFFICER, JobStates.FIRST_TEA) )
-        #     for s in DutyOfficerShifts}
-        # self.first_tea_break_processes[Roles.VOLUNTEER] = {s:self.env.process(
-        #     self.counsellors_break(s, Roles.VOLUNTEER, JobStates.FIRST_TEA) )
-        #     for s in VolunteerShifts}
-        # self.last_tea_break_processes[Roles.SOCIAL_WORKER] = {s:self.env.process(
-        #     self.counsellors_break(s, Roles.SOCIAL_WORKER, JobStates.LAST_TEA) )
-        #     for s in SocialWorkerShifts}
-        # self.last_tea_break_processes[Roles.DUTY_OFFICER] = {s:self.env.process(
-        #     self.counsellors_break(s, Roles.DUTY_OFFICER, JobStates.LAST_TEA) )
-        #     for s in DutyOfficerShifts}
-
-
-
         # generate users
         # this process will not be disrupted even when counsellors sign out
         self.user_handler = [None] * LEN_CIRCULAR_ARRAY
@@ -698,6 +588,11 @@ class ServiceOperation:
     def served_g_regular(self):
         return self.__served_g_regular
 
+    @property
+    def case_chat_time(self):
+        return self.__case_chat_time
+    
+
     @user_queue_max_length.setter
     def user_queue_max_length(self, value):
         self.__user_queue_max_length = value
@@ -725,6 +620,10 @@ class ServiceOperation:
     @served_g_regular.setter
     def served_g_regular(self, value):
         self.__served_g_regular = value
+
+    @case_chat_time.setter
+    def case_chat_time(self, value):
+        self.__case_chat_time = value
 
     ############################################################################
     # counsellor related functions
@@ -874,22 +773,6 @@ class ServiceOperation:
 
     #---------------------------------------------------------------------------
 
-    def get_break_states(self, shift, role):
-        '''
-            helper function to return break start time and duration by break type
-        '''
-
-        if break_type is JobStates.MEAL_BREAK:
-            return shift.meal_start, self.__meal_break # wait until start of shift to begin shift
-        elif break_type is JobStates.FIRST_TEA:
-            return shift.first_tea_start, self.__tea_break
-        elif break_type is JobStates.LAST_TEA and role is Roles.VOLUNTEER:
-            return shift.last_tea_start, self.__tea_break
-        else:
-            return None, None
-
-    #---------------------------------------------------------------------------
-
     def counsellors_break_start(self, shift, role):
         '''
             routine to start a meal break
@@ -1017,7 +900,7 @@ class ServiceOperation:
                         for c in counsellors_to_sign_out:
                             if c.client_id is not None:
                                 try:
-                                    self.user_handler[c.client_id].interrupt((cause, c) )
+                                    self.user_handler[c.client_id%LEN_CIRCULAR_ARRAY].interrupt((cause, c) )
                                 except RuntimeError:
                                     logging.debug(f'{Colors.BLUE}**************************************************************************{Colors.HEND}')
                                     logging.debug(f'{Colors.BLUE}User {c.client_id} process cannot be interrupted{Colors.HEND}')
@@ -1034,7 +917,7 @@ class ServiceOperation:
             tos_state = self.assign_TOS_acceptance()
             if tos_state == TOS.TOS_ACCEPTED:
                 self.num_users_TOS_accepted += 1
-                self.user_handler[i] = self.env.process(
+                self.user_handler[i%LEN_CIRCULAR_ARRAY] = self.env.process(
                     self.handle_user(i)
                 )
 
@@ -1097,14 +980,16 @@ class ServiceOperation:
         renege_time = self.assign_renege_time()
         user_status = self.assign_user_status()
         risklevel = self.assign_risklevel(user_status)
-        chat_duration = self.assign_chat_duration(risklevel.mean_chat_duration)
-        process_user = chat_duration + self.__counsellor_postchat_survey # total time to process user
-        transfer_flag = False # if process is interrupted, this flag is set to True
+        chat_duration = self.assign_chat_duration(
+            risklevel.mean_chat_duration, risklevel.variance_chat_duration)
+        transfer_case = False # if process is interrupted, this flag is set to True
         self.users_in_system.append(user_id)
         self.user_queue.append(user_id)
+        cumulative_chat_time = 0
+        chat_finished = False
 
 
-        while process_user:
+        while chat_duration:
             start_time = self.env.now
 
             # wait for a counsellor matching role or renege
@@ -1183,36 +1068,40 @@ class ServiceOperation:
 
                 # remove user from system record
                 self.users_in_system.remove(user_id)
-                time_spent_in_queue = renege_time
-                if not transfer_flag:
+                if not transfer_case:
                     self.reneged += 1 # update counter
+                    log_string = f'{Colors.HBLUE}No counsellor picked up this case{Colors.HEND}'
                 else:
                     self.reneged_during_transfer += 1
-                process_user = 0 # exit loop
+                    self.case_chat_time.append(cumulative_chat_time)
+                    
 
+                    log_string = f'{Colors.HBLUE}The session lasted {cumulative_chat_time:.3f} minutes.\n\n{Colors.HEND}'
 
                 logging.debug(f'{Colors.HRED}**************************************************************************{Colors.HEND}')
                 logging.debug(f'{Colors.HRED}User {user_id} reneged after '
                     f'spending t = {renege_time:.3f} minutes in the queue.{Colors.HEND}')
+                logging.debug(log_string)
                 logging.debug(f'{Colors.HRED}**************************************************************************{Colors.HEND}\n')
-
 
                 logging.debug(f'Users in system: {self.users_in_system}')
 
+                chat_duration = 0
 
 
             else: # if counsellor takes in a user
-                start_time = self.env.now
+                chat_start_time = self.env.now
                 counsellor_instance = results[list(results)[0]] # unpack the counsellor instance
                 counsellor_instance.client_id = user_id
 
-                
+
                 logging.debug(f'{Colors.HGREEN}**************************************************************************{Colors.HEND}')
                 logging.debug(f'{Colors.HGREEN}User {user_id} is assigned to '
-                    f'{counsellor_instance.counsellor_id} at {self.env.now:.3f}{Colors.HEND}')
+                    f'{counsellor_instance.counsellor_id} at {chat_start_time:.3f}{Colors.HEND}')
                 logging.debug(f'{Colors.HGREEN}**************************************************************************{Colors.HEND}\n')
 
-                if transfer_flag is False:  
+
+                if not transfer_case:  
                     self.served += 1 # update counter
                     if user_status is Users.REPEATED:
                         self.served_g_repeated += 1
@@ -1220,42 +1109,72 @@ class ServiceOperation:
                         self.served_g_regular += 1
 
 
+                chat_complete = None
                 try:
                     # timeout is chat duration + 20 minutes to fill out postchat survey
-                    yield self.env.timeout(process_user)
+                    chat = yield self.env.timeout(chat_duration)
+                    chat_complete = True
+                    fill_postchat = yield self.env.timeout(
+                        self.__counsellor_postchat_survey_time,
+                        value=self.env.now
+                    ) # if triggered, store timestamp
+                    
 
                 except simpy.Interrupt as si:
-                    transfer_flag = True
                     if isinstance(si.cause, tuple) and si.cause[0] in [JobStates.SIGNOUT, JobStates.MEAL_BREAK]:
-                        counsellor_to_sign_out = si.cause[-1]
-                        if si.cause == JobStates.SIGNOUT:
-                            status = 'signed out'
-                        else: # if JobStates.MEAL_BREAK
-                            status = 'taking a break (AFK)'
 
+                        counsellor_to_sign_out = si.cause[-1]
                         if counsellor_instance is counsellor_to_sign_out:
-                            logging.debug(f'{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}')
-                            logging.debug(f'{Colors.RED}Counsellor {counsellor_instance.counsellor_id} '
-                                f'released at t = {self.env.now:.3f} ({self.env.now%MINUTES_PER_DAY:.3f}).{Colors.WHITE}')
-                            logging.debug(f'{Colors.RED}--------------------------------------------------------------------------{Colors.WHITE}\n')
+
+                            if chat_complete is True:
+                                elapsed = chat_duration
+                                chat_duration = 0
+                            else: # still working on the chat, haven't started on the postchat form
+                                elapsed = self.env.now - chat_start_time
+                                chat_duration -= elapsed
+                                chat_duration = max(0, chat_duration) # make sure not below 0. Fixes overflow and underflow problems
+                            
+                            cumulative_chat_time += elapsed
+
+
+                            if chat_duration > 0: 
+                                transfer_case = True # attempt to transfer case
+                                self.user_queue.append(user_id) # put user back into queue
+                                log_string = f'{Colors.HBLUE}Transferring User {user_id} to another counsellor.{Colors.HEND}. Remaining: {chat_duration:.3f}.  cumulative_chat_time: {cumulative_chat_time}'
+
+                            else:
+                                # remove user from system record
+                                self.users_in_system.remove(user_id)
+                                logging.debug(f'Users in system: {self.users_in_system}')
+
+                                self.case_chat_time.append(cumulative_chat_time)
+                                chat_duration = 0
+                                log_string = f'{Colors.HBLUE}The session lasted {cumulative_chat_time:.3f} minutes.\n\n{Colors.HEND}'
 
 
                             logging.debug(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}')
                             logging.debug(f'{Colors.HBLUE}Counsellor {counsellor_instance.counsellor_id} left User {user_id}\'s\n'
-                                f'counselling session and {status} at {self.env.now:.3f} ({self.env.now%MINUTES_PER_DAY:.3f}).\n'
-                                f'The session lasted {chat_duration:.3f} minutes.\n\n'
-                                f'Transferring User {user_id} to another counsellor.{Colors.HEND}')
+                                f'counselling session and {si.cause[0].status} at {self.env.now:.3f} ({self.env.now%MINUTES_PER_DAY:.3f}).\n{Colors.HEND}')
+                            logging.debug(log_string)
                             logging.debug(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}\n')
 
-                            process_user -= self.env.now - start_time
-                            self.user_queue.append(user_id) # put user back into queue
                 
                 else:
                     # put the counsellor back into the store, so it will be available
                     # to the next user
+                    try:
+                        elapsed = fill_postchat - chat_start_time # exclude time spent on postchat survey (up to fill_postchat trigger time)
+                        assert elapsed > 0
+                    except AssertionError:
+                        elapsed = 0
+
+                    cumulative_chat_time += elapsed
+
+                    self.case_chat_time.append(cumulative_chat_time)
+
                     logging.debug(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}')
                     logging.debug(f'{Colors.HBLUE}User {user_id}\'s counselling session lasted t = '
-                        f'{chat_duration:.3f} minutes.\nCounsellor {counsellor_instance.counsellor_id} '
+                        f'{cumulative_chat_time:.3f} minutes.\nCounsellor {counsellor_instance.counsellor_id} '
                         f'is now available at {self.env.now:.3f}.{Colors.HEND}')
                     logging.debug(f'{Colors.HBLUE}**************************************************************************{Colors.HEND}\n')
 
@@ -1265,9 +1184,9 @@ class ServiceOperation:
                     logging.debug(f'Users in system: {self.users_in_system}')
 
                     # counsellor resource is now available
-                    yield self.store_counsellors_active.put(counsellor_instance)  
+                    yield self.store_counsellors_active.put(counsellor_instance)
 
-                    process_user = 0
+                    chat_duration = 0
 
     ############################################################################
     # Predefined Distribution Getters
@@ -1278,17 +1197,13 @@ class ServiceOperation:
             Getter to assign interarrival time by the current time interval
             interarrival time follows the exponential distribution
 
-            returns - interarrival time (an integer to prevent overflow/underflow problems)
+            returns - interarrival time
         '''
         
         # cast this as integer to get a rough estimate
         # calculate the nearest hour as an integer
         # use it to access the mean interarrival time, from which the lambda
         # can be calculated
-
-        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        # print('INTERARRIVALS')
-        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
         current_time = int(self.env.now)
         # logging.debug(f'Current time: {current_time}')
@@ -1308,8 +1223,6 @@ class ServiceOperation:
         # logging.debug(f'index: {idx}')
 
         lambda_interarrival = 1.0 / self.__mean_interarrival_time[idx]
-        # return random.gammavariate(50, lambda_interarrival)
-        # return int(round(random.expovariate(lambda_interarrival), 2) )
         return random.expovariate(lambda_interarrival)
 
     #---------------------------------------------------------------------------
@@ -1317,29 +1230,46 @@ class ServiceOperation:
     def assign_renege_time(self):
         '''
             Getter to assign patience to user
-            user patience follows an exponential distribution
+            user patience follows a log normal distribution
 
-            returns - renege time (an integer to prevent overflow/underflow problems)
+            The python lognormal pdf implementation is parametrized with 
+            sigma (standard deviation) and mu (mean) of the NORMAL distribution,
+            This means taking the mean and sd of natural log of the renege data
+            is needed.
+
+            For details please see
+            https://github.com/python/cpython/blob/master/Lib/random.py
+
+            returns - renege time
         '''
-        lambda_renege = 1.0 / self.__mean_renege_time
-        # return int(round(random.expovariate(lambda_renege), 2) )
-        return random.expovariate(lambda_renege)
+        return random.lognormvariate(
+            self.__mean_log_renege_time, self.__sd_log_renege_time)
 
     #---------------------------------------------------------------------------
 
-    def assign_chat_duration(self, mean_chat_duration):
+    def assign_chat_duration(self, mean_chat_duration, variance_chat_duration):
         '''
             Getter to assign chat duration
-            chat duration follows the gamma distribution (exponential if a=1)
+            chat duration follows the gamma distribution
+            with alpha and beta values derived from mean and variance
+            in the OpenUp MCCIS data
 
-            param: mean_chat_duration - mean chat duration in seconds (integer)
+            The python gamma pdf is parametrized with a shape parameter 
+            alpha (k) and a scale parameter beta (theta)
 
-            returns - chat duration (an integer to prevent overflow/underflow problems)
+            param:  mean_chat_duration - mean chat duration in seconds
+                    variance_chat_duration - chat duration variance
+
+            returns - chat duration or MAX_CHAT_DURATION if chat time has exceeded
+                service standards
         '''
-        lambda_chat_duration = 1.0 / mean_chat_duration
-        return random.expovariate(lambda_chat_duration)
-        # return int(round(random.expovariate(lambda_chat_duration), 2) )
-        # return random.gammavariate(2, lambda_chat_duration)
+        alpha = (mean_chat_duration ** 2) / variance_chat_duration
+        beta = variance_chat_duration / mean_chat_duration
+        duration = random.gammavariate(alpha, beta)
+        if duration < MAX_CHAT_DURATION:
+            return duration
+        # otherwise
+        return MAX_CHAT_DURATION
 
     #---------------------------------------------------------------------------
 
@@ -1400,7 +1330,7 @@ class ServiceOperation:
 
     def read_interarrivals_csv(self):
         '''
-            file input function to read in interarrivals data
+            file input function to read in mean interarrivals data
             by the day, starting from Sunday 0h, ending at Saturday 23h      
         '''
         try:
