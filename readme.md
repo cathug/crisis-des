@@ -36,15 +36,16 @@ The second version `queue_simulation2.py` does not factor in breaks.
 Also in this version, counsellors may be required to work overtime.
 
 The uptake of cases depends on the assigned user chat time.  
-The counsellor will only serve the user if the case be served under the 
+The counsellor will only serve the user if the case be served within the 
 `remaining shift duration` - `30-minute` cutoff time.
 While in reality counsellors cannot predict the chat time, this sentinel is
 needed to prevent the rare edge case whereby counsellors handle marathon cases
 many minutes (days) beyond their assigned signoff time.
 
-`queue_interarrival_service_duration_exploration.ipynb` is added to generate
-the descriptive statistics and to explore the data distributions of renege time,
-chat time, and interarrival time.
+`queue_interarrival_service_duration_exploration.ipynb` is added to produce
+the descriptive statistics, to explore the data distributions of renege time,
+chat time, and interarrival time, and to generate the interarrivals file needed
+for simulations beyond Nov. 30, 2020.
 
 ---
 
