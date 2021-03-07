@@ -77,7 +77,7 @@ to speed up multiprocessing during bootstrap.  Interarrivals folder contains
 the **actual** interarrival data from Nov 2020, which can be used to simulate
 approximate manpower needed to handle users for the paper.
 
-In earlier iterations, interarrivals times were generated from a list of mean
+In earlier simulation iterations, interarrivals times were selected from a list of mean
 interarrivals, read in from a csv file.  This version has been been phased out
 and removed from the repository since March 2021.
 
@@ -88,8 +88,8 @@ to better emulate actual SO conditions.
 
 `ServiceOperation.assign_interarrival_time()` has been rewritten to allow
 sequence of arrivals to be generated using the thinning algorithm.  It 
-can a **long time** to produce results, so when thinning is specified, 
-please lower the number of bootstrap iterations when simulating results.
+can take a **long time** to produce results, so when thinning is specified during
+simulations, please lower the number of bootstrap iterations to 150 or fewer.
 
 The layouts and diagrams in `queue_interarrival_service_duration_exploration.ipynb`
 have been revised.  All diagrams have been updated for the preparation of the
