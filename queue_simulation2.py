@@ -22,6 +22,10 @@ from simpy.util import start_delayed
 from pprint import pprint
 # from scipy.stats import poisson
 from simpy.events import AllOf
+from statsmodels.tsa.statespace.structural import UnobservedComponents
+from scipy.stats import boxcox
+from scipy.special import inv_boxcox
+import pandas as pd
 
 
 logging.basicConfig(
@@ -31,9 +35,12 @@ logging.basicConfig(
 )
 
 
+NOV_INTERARRIVALS = os.path.expanduser(
+    '~/csrp/openup-queue-simulation/real_interarrivals_nov.csv')
+
 
 INTERARRIVALS_FILE = os.path.expanduser(
-    '~/csrp/openup-queue-simulation/interarrivals_day_of_week_hour/Sep2020_to_Nov2020/interarrivals_day_of_week_hour.csv')
+    '~/csrp/openup-queue-simulation/interarrivals_day_of_week_hour/Oct2020_to_Nov2020/interarrivals_day_of_week_hour.csv')
 
 ################################################################################ 
 # Globals
@@ -50,17 +57,14 @@ MAX_SIMULTANEOUS_CHATS = {
 }    
 
 SEED = 728                                  # for seeding the sudo-random generator
+THINNING_SEED = 305                         # for seeding the thing algo sudo-random generator
+OFFSET = 372
+
 MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
 SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes 
                                             #     per day * num days in month
 
 POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
-
-
-# also see assign_renege_time() in ServiceOperation class with regards
-# to specification of renege parameters 
-MEAN_LOG_RENEGE_TIME = 2.72                 # mean of natural log of patience before reneging
-SD_LOG_RENEGE_TIME = .856                   # sd of natural log of patience before reneging
 
 
 # counsellor average chat no longer than 60 minutes
@@ -69,21 +73,6 @@ MEAN_CHAT_DURATION_COUNSELLOR = {
     'SOCIAL_WORKER': 51.4,                  # Social Worker - average 51.4 minutes
     'DUTY_OFFICER': 56.9,                   # Duty Officer - average 56.9 minutes
     'VOLUNTEER': 57.2,                      # Volunteer - average 57.2 minutes
-}
-
-
-MEAN_CHAT_DURATION_USER = {
-    'CRISIS': 105.1,                        # Crisis and High combined to give
-    'HIGH': 105.1,                          #     average 105.1 minutes 
-    'MEDIUM': 75.7,                         # Medium - average 75.7 minutes
-    'LOW': 53.8,                            # Low - average 53.8 minutes
-}
-
-SD_CHAT_DURATION_USER = {
-    'CRISIS': 72.3,                         # Crisis and High combined to give
-    'HIGH': 72.3,                           #     sd 72.3 minutes 
-    'MEDIUM': 46.2,                         # Medium - sd 46.2 minutes
-    'LOW': 40.7,                            # Low - sd 40.7 minutes
 }
 
 
@@ -116,20 +105,22 @@ NUM_DUTY_OFFICERS = {
 }
 
 NUM_SOCIAL_WORKERS = {
-    'GRAVEYARD': 1,
-    'AM': 2,
-    'PM': 2,
-    'SPECIAL': 3
-}
-
-NUM_VOLUNTEERS = {
-    'GRAVEYARD': 3,
-    'AM': 2,
-    'PM': 2,
+    'GRAVEYARD': 7,
+    'AM': 7,
+    'PM': 4,
     'SPECIAL': 4
 }
 
+NUM_VOLUNTEERS = {
+    'GRAVEYARD': 5,
+    'AM': 2,
+    'PM': 4,
+    'SPECIAL': 5
+}
+
 MAX_CHAT_DURATION = 60 * 11 # longest chat duration is 11 hours (from OpenUp 1.0)
+
+VALIDATE_CHAT_THRESHOLD = 20                # time elapsed in minutes to have a pingpong>=4 
 
 ################################################################################
 # Enums and constants
@@ -278,36 +269,43 @@ class Risklevels(enum.Enum):
     '''
         Distribution of LOW/MEDIUM/HIGH/CRISIS
     '''
+    # nested tuple order - p, mean, variance
+    # risk enum | risklevel | non-repeated data | repeated data
+    CRISIS =    ('CRISIS',  ( .0,   96.3, 54.3 ), ( .0,   149.1, 121.2 ) )
+    HIGH =      ('HIGH',    ( .002, 96.3, 54.3 ), ( .001, 149.1, 121.2 ) )
+    MEDIUM =    ('MEDIUM',  ( .080, 74.7, 42.3 ), ( .087, 81.0, 63.8 ) )
+    LOW =       ('LOW',     ( .918, 52.9, 37.0 ), ( .906, 59.7, 60.0 ) )
 
-    # risk enum | risklevel | non-repeated probability | repeated probability
-    CRISIS =    ('CRISIS',  .0,    .0)
-    HIGH =      ('HIGH',    .002,  .001)
-    MEDIUM =    ('MEDIUM',  .080,  .087)
-    LOW =       ('LOW',     .918,  .906)
-
-    def __init__(self, risk, p_non_repeated_user, p_repeated_user):
+    def __init__(self, risk,
+        non_repeated_user_data, repeated_user_data):
         self.risk = risk
-        self.p_non_repeated_user = p_non_repeated_user
-        self.p_repeated_user = p_repeated_user
-        self.mean_chat_duration  = MEAN_CHAT_DURATION_USER.get(risk)
-        self.variance_chat_duration = SD_CHAT_DURATION_USER.get(risk) ** 2
+
+        self.p_non_repeated_user = non_repeated_user_data[0]
+        self.mean_chat_duration_non_repeated_user  = non_repeated_user_data[1]
+        self.variance_chat_duration_non_repeated_user = non_repeated_user_data[2]
+
+        self.p_repeated_user = repeated_user_data[0]
+        self.mean_chat_duration_repeated_user  = repeated_user_data[1]
+        self.variance_chat_duration_repeated_user = repeated_user_data[2]
         
 #-------------------------------------------------------------------------------
 
 class Users(enum.Enum):
     '''
-        Distribution of Repeated Users - 85% regular / 15% repeated
-        This ratio is based on repeated user def on counsellor postchat
+        Distribution of Repeated Users - 78% regular / 22% repeated
+        among the users accepting TOS
     '''
-
-    # user enum | user status | user index | probability
-    REPEATED =      ('REPEATED_USER',       1,  .15)
-    NON_REPEATED =  ('NONREPEATED_USER',    2,  .85)
+    # nested tuple order - p, mean, variance
+    # user enum | user status | user index | probability, mean, sd
+    REPEATED =      ('REPEATED_USER',       1,  (.22, 57.2, 39.0) )
+    NON_REPEATED =  ('NONREPEATED_USER',    2,  (.78, 70.5, 65.8) )
     
-    def __init__(self, user_type, index, probability):
+    def __init__(self, user_type, index, user_data):
         self.user_type = user_type
         self.index = index # index to access Risklevel probability
-        self.probability = probability
+        self.probability = user_data[0]
+        self.mean_patience = user_data[1]
+        self.variance_patience = user_data[2]
 
 #-------------------------------------------------------------------------------
 
@@ -317,11 +315,12 @@ class TOS(enum.Enum):
     '''
 
     # TOS enum | TOS status
-    TOS_ACCEPTED =  'TOS_ACCEPTED'
-    TOS_REJECTED =  'TOS_REJECTED'
+    TOS_ACCEPTED =  ('TOS_ACCEPTED', .748)
+    TOS_REJECTED =  ('TOS_REJECTED', .252)
     
-    def __init__(self, status):
+    def __init__(self, status, probability):
         self.status = status
+        self.probability = probability
 
 #-------------------------------------------------------------------------------
 
@@ -384,10 +383,11 @@ class ServiceOperation:
         process
     '''
 
-    def __init__(self, *, env, 
+    def __init__(self, *, env, ts, ts_period, thinning_random,
+        boxcox_lambda=None, 
         postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
-        mean_log_renege_time=MEAN_LOG_RENEGE_TIME,
-        sd_log_renege_time=SD_LOG_RENEGE_TIME,):
+        valid_chat_threshold=VALIDATE_CHAT_THRESHOLD,
+        use_actual_interarrivals=False):
 
         '''
             init function
@@ -395,28 +395,33 @@ class ServiceOperation:
             param:
                 env - simpy environment
 
+                ts - fitted time series model (a statsmodel object)
+
+                ts_period - period in the specified time series (an integer)
+
+                boxcox_lambda - the fitted lambda variable, if available
+                    default is set to None
+
                 postchat_fillout_time - Time alloted to complete the counsellor postchat
                     if not specified, defaults to POSTCHAT_FILLOUT_TIME
 
-                mean_log_renege_time - Mean renege time in minutes.
-                    If not specified, defaults to MEAN_RENEGE_TIME
-
-                sd_log_renege_time  - sd renege time in minutes
-                    If not specified, defaults to SD_LOG_RENEGE_TIME
+                valid_chat_threshold - how much time elapsed before case is counted as valid chat
         '''
+
+        if use_actual_interarrivals:
+            self.interarrivals = self.read_interarrival_time()
+
+        self.time_series = ts
+        self.time_series_period = ts_period
+        self.boxcox_lambda = boxcox_lambda
+        self.thinning_random = thinning_random
+
+        self.valid_chat_threshold = valid_chat_threshold
+
         self.env = env
 
         self.__counsellor_postchat_survey = postchat_fillout_time
-        self.__mean_log_renege_time = mean_log_renege_time
-        self.__sd_log_renege_time = sd_log_renege_time
 
-        # set interarrivals (a circular array of interarrival times)
-        self.__mean_interarrival_time = self.read_interarrivals_csv()
-        # logging.debug(self.__mean_interarrival_time)
-
-        # vector of TOS probabilities
-        self.__TOS_probabilities = self.read_tos_probabilities_csv()
-        # logging.debug(self.__TOS_probabilities)
 
 
         # counters and flags (also see properties section)
@@ -429,6 +434,7 @@ class ServiceOperation:
         self.served = 0
         self.served_g_repeated = 0
         self.served_g_regular = 0
+        self.served_g_valid = 0
  
         self.user_in_system = []
         self.user_queue = []
@@ -508,6 +514,10 @@ class ServiceOperation:
         return self.__served_g_regular
 
     @property
+    def served_g_valid(self):
+        return self.__served_g_valid
+
+    @property
     def case_chat_time(self):
         return self.__case_chat_time
 
@@ -535,6 +545,10 @@ class ServiceOperation:
     @served_g_regular.setter
     def served_g_regular(self, value):
         self.__served_g_regular = value
+
+    @served_g_valid.setter
+    def served_g_valid(self, value):
+        self.__served_g_valid = value  
 
     @case_chat_time.setter
     def case_chat_time(self, value):
@@ -682,21 +696,25 @@ class ServiceOperation:
             at "interarrival_time" invervals to mimic user interarrivals
         '''
 
-        for i in itertools.count(1): # use this instead of while loop 
+        for i in itertools.count(): # use this instead of while loop 
                                      # for efficient looping
 
             # space out incoming users
-            interarrival_time = self.assign_interarrival_time()
+            interarrival_time = self.assign_interarrival_time(i)
+            if interarrival_time is None:
+                continue # skip the rest of the code and move to next iteration
+
             yield self.env.timeout(interarrival_time)
 
             self.num_users += 1 # increment counter
+            uid = self.num_users + 1
 
             # if TOS accepted, send add user to the queue
             # otherwise increment counter and do nothing
             tos_state = self.assign_TOS_acceptance()
             if tos_state == TOS.TOS_ACCEPTED:
                 self.num_users_TOS_accepted += 1
-                self.env.process(self.handle_user(i) )
+                self.env.process(self.handle_user(uid) )
             else: # if TOS.TOS_REJECTED
                 self.num_users_TOS_rejected += 1
 
@@ -743,13 +761,26 @@ class ServiceOperation:
             # else:
             return x.role in [Roles.SOCIAL_WORKER, Roles.VOLUNTEER]
 
-        renege_time = self.assign_renege_time()
+
         user_status = self.assign_user_status()
         risklevel = self.assign_risklevel(user_status)
-        chat_duration = self.assign_chat_duration(
-            risklevel.mean_chat_duration, risklevel.variance_chat_duration)
+        renege_time = self.assign_renege_time(
+            user_status.mean_patience, user_status.variance_patience)
+
+        if user_status is Users.REPEATED:
+            chat_duration = self.assign_chat_duration(
+                risklevel.mean_chat_duration_repeated_user,
+                risklevel.variance_chat_duration_repeated_user
+            )
+        else:
+            chat_duration = self.assign_chat_duration(
+                risklevel.mean_chat_duration_non_repeated_user,
+                risklevel.variance_chat_duration_non_repeated_user
+            )
+
         process_user = chat_duration + self.__counsellor_postchat_survey # total time to process user
         init_flag = True
+
 
         while process_user:
             start_time = self.env.now
@@ -861,7 +892,8 @@ class ServiceOperation:
                         f'{counsellor_instance.counsellor_id} at {self.env.now:.3f}{Colors.HEND}')
                     logging.debug(f'{Colors.HGREEN}**************************************************************************{Colors.HEND}\n')
 
-                    # timeout is chat duration + 20 minutes to fill out postchat survey
+                    # timeout is chat duration + self.__counsellor_postchat_survey_time
+                    # minutes to fill out postchat survey
                     yield self.env.timeout(process_user)
 
                     # put the counsellor back into the store, so it will be available
@@ -886,7 +918,10 @@ class ServiceOperation:
                     else:
                         self.served_g_regular += 1
 
-                    self.case_chat_time.append(process_user - self.__counsellor_postchat_survey)
+                    case_chat_time = process_user - self.__counsellor_postchat_survey
+                    self.case_chat_time.append(case_chat_time)
+                    if case_chat_time >= self.valid_chat_threshold:
+                        self.served_g_valid += 1
                     process_user = 0
 
 
@@ -898,64 +933,128 @@ class ServiceOperation:
     # Predefined Distribution Getters
     ############################################################################
 
-    def assign_interarrival_time(self):
+    def assign_interarrival_time(self, idx=None):
         '''
-            Getter to assign interarrival time by the current time interval
+            Getter to assign interarrival time using Thinning Algorithm on an
+            interval-interval basis
+            
             interarrival time follows the exponential distribution
 
-            returns - interarrival time (an integer to prevent overflow/underflow problems)
+            returns - interarrival time
         '''
-        
+
+        if idx is not None:
+            end_interarrivals = len(self.interarrivals)
+            return self.interarrivals[idx%end_interarrivals]
+
+
+
+
+        def get_max_arrival_rate(start_interval, end_interval):
+            '''
+                helper function to get the arrival rate lambda at within an
+                interval range
+
+                param:  start_interval - index to start
+                        end_interval - index to end
+
+                precondition: start_interval >= end_interval
+            '''
+
+            # take the maximum arrival rate within interval
+            arrival_rate = self.time_series.predict(
+                start=start_interval+OFFSET, end=end_interval+OFFSET).max()
+            if self.boxcox_lambda is not None:
+                arrival_rate = inv_boxcox(
+                    arrival_rate, self.boxcox_lambda)
+            return arrival_rate
+
+        #-----------------------------------------------------------------------
+
+        def get_arrival_rate(interval):
+            '''
+                helper function to get the arrival rate lambda at the specific
+                interval
+
+                param:  interval - index
+            '''
+
+            return get_max_arrival_rate(interval+OFFSET, interval+OFFSET)
+
+        #-----------------------------------------------------------------------
+
+
         # cast this as integer to get a rough estimate
         # calculate the nearest hour as an integer
         # use it to access the mean interarrival time, from which the lambda
         # can be calculated
+        current_time = self.env.now
+        current_time_int = int(current_time)
+        current_weekday = int(current_time_int / MINUTES_PER_DAY)
+        current_day_minutes = current_time % MINUTES_PER_DAY
+        nearest_two_hours = int(current_day_minutes / 120)
 
-        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        # print('INTERARRIVALS')
-        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        local_max_idx_pt = int(self.time_series_period * current_weekday + nearest_two_hours)
+        max_idx_start = local_max_idx_pt - 1
+        max_idx_end = local_max_idx_pt + 1# self.time_series_period - 1
+        if max_idx_end > 1104:
+            max_idx_end = 1104
 
-        current_time = int(self.env.now)
+        # generate the dominant homogeneous Poisson Process
+        max_arrival_rate = get_max_arrival_rate(max_idx_start, max_idx_end)
+        homo_interarrival_time = random.expovariate(max_arrival_rate)
+        return homo_interarrival_time
+
+
+        # find idx = x+t
+        next_arrival_time = current_time + homo_interarrival_time
+        next_weekday = int(next_arrival_time / MINUTES_PER_DAY)
+        next_arrival_time_day_minutes = next_arrival_time % MINUTES_PER_DAY
+        next_nearest_two_hour_interval = int(next_arrival_time_day_minutes / 120)
+        idx = int(self.time_series_period*next_weekday + next_nearest_two_hour_interval)
+    
+        # calculate lambda(x+t)
+        next_arrival_rate = get_arrival_rate(idx)
+
         # logging.debug(f'Current time: {current_time}')
-
-        current_weekday = int(current_time / MINUTES_PER_DAY)
         # logging.debug(f'Current weekday: {current_weekday}')
 
-
-        current_day_minutes = current_time % MINUTES_PER_DAY
-        # logging.debug(f'Current Minutes day: {current_day_minutes}')
-        nearest_hour = int(current_day_minutes / 60)
-        # logging.debug(f'Nearest hour: {nearest_hour}')
-        
-        # get the index
-        idx = int(24*current_weekday + nearest_hour) % \
-            len(self.__mean_interarrival_time)
+        # logging.debug(f'Next time: {next_arrival_time}')
+        # logging.debug(f'Next weekday: {next_weekday}')
+        # logging.debug(f'Next Minutes day: {next_arrival_time_day_minutes}')
+        # logging.debug(f'Next Nearest two hour: {next_nearest_two_hour_interval}')
         # logging.debug(f'index: {idx}')
 
-        lambda_interarrival = 1.0 / self.__mean_interarrival_time[idx]
-        # return random.gammavariate(50, lambda_interarrival)
-        # return int(round(random.expovariate(lambda_interarrival), 2) )
-        return random.expovariate(lambda_interarrival)
+
+        # decide whether to output interarrival time
+        random_num = self.thinning_random.uniform(0, 1)
+        if random_num <= (next_arrival_rate / max_arrival_rate):
+            return homo_interarrival_time
+        return None
 
     #---------------------------------------------------------------------------
 
-    def assign_renege_time(self):
+    def assign_renege_time(self, mean_patience, variance_patience):
         '''
             Getter to assign patience to user
-            user patience follows a log normal distribution
+            user patience follows the gamma distribution
 
-            The python lognormal pdf implementation is parametrized with 
-            sigma (standard deviation) and mu (mean) of the NORMAL distribution,
-            This means taking the mean and sd of natural log of the renege data
-            is needed.
+            The python gamma pdf is parametrized with a shape parameter 
+            alpha (k) and a scale parameter beta (theta)
 
             For details please see
             https://github.com/python/cpython/blob/master/Lib/random.py
 
+            param:  mean_patience - mean patience in seconds
+                    variance_patience - patience variance
+
             returns - renege time
         '''
-        return random.lognormvariate(
-            self.__mean_log_renege_time, self.__sd_log_renege_time)
+
+        alpha = (mean_patience ** 2) / variance_patience
+        beta = variance_patience / mean_patience
+
+        return random.gammavariate(alpha, beta)
 
     #---------------------------------------------------------------------------
 
@@ -992,7 +1091,7 @@ class ServiceOperation:
             param: user_type - one of either Users enum
         '''
         options = list(Risklevels)
-        probability = [x.value[user_type.index] for x in options]
+        probability = [x.value[user_type.index][0] for x in options]
 
         return random.choices(options, probability)[0]
 
@@ -1003,7 +1102,7 @@ class ServiceOperation:
             Getter to assign user status
         '''
         options = list(Users)
-        probability = [x.value[-1] for x in options]
+        probability = [x.value[-1][0] for x in options]
 
         return random.choices(options, probability)[0]
 
@@ -1014,65 +1113,31 @@ class ServiceOperation:
             Getter to assign TOS status
         '''
         
-        current_time = int(self.env.now)
-        # logging.debug(f'Current time: {current_time}')
-
-        current_weekday = int(current_time / MINUTES_PER_DAY)
-        # logging.debug(f'Current weekday: {current_weekday}')
-
-
-        current_day_minutes = current_time % MINUTES_PER_DAY
-        # logging.debug(f'Current Minutes day: {current_day_minutes}')
-        nearest_hour = int(current_day_minutes / 60)
-        # logging.debug(f'Nearest hour: {nearest_hour}')
-        
-        # get the index
-        idx = int(24*current_weekday + nearest_hour) % \
-            len(self.__TOS_probabilities)
-        # logging.debug(f'index: {idx}')
-
-        p_tos_accepted = self.__TOS_probabilities[idx]
         options = list(TOS)
+        probability = [x.value[-1] for x in options]
 
-        return random.choices(options, [p_tos_accepted, 1-p_tos_accepted])[0]
+        return random.choices(options, probability)[0]
 
     ############################################################################
     # File IO functions
     ############################################################################
 
-    def read_interarrivals_csv(self):
+    def read_interarrival_time(self):
         '''
-            file input function to read in interarrivals data
-            by the day, starting from Sunday 0h, ending at Saturday 23h      
+            file input function to read in actual interarrivals file      
         '''
         try:
-            with open(INTERARRIVALS_FILE, 'r') as f:
-                weekday_hours = [float(i.split(',')[-2][:-1])
-                    for i in f.readlines()[1:] ]
+            with open(NOV_INTERARRIVALS, 'r') as f:
+                interarrivals = [float(i) for i in f.readlines() ]
 
-            return weekday_hours
+            return interarrivals
 
         except Exception as e:
             print('Unable to read interarrivals file.')
 
-    #---------------------------------------------------------------------------
-
-    def read_tos_probabilities_csv(self):
-        '''
-            file input function to read in TOS acceptance probability data
-            by the day, starting from Sunday 0h, ending at Saturday 23h      
-        '''
-        try:
-            with open(INTERARRIVALS_FILE, 'r') as f:
-                probabilities = [float(i.split(',')[-1][:-1])
-                    for i in f.readlines()[1:] ]
-
-            return probabilities
-
-        except Exception as e:
-            print('Unable to read TOS probabilities file.')
-
-    #---------------------------------------------------------------------------
+    ############################################################################
+    # Debugging functions
+    ############################################################################
 
     def print_idle_counsellors_working(self):
         pprint([x.counsellor_id for x in self.store_counsellors_active.items])
@@ -1088,13 +1153,43 @@ def main():
     logging.debug('Initializing OpenUp Queue Simulation')
     logging.debug('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
+    # seed for thinning algorithm
+    thinning_random = random.Random()
+    thinning_random.seed(THINNING_SEED)
+
+    # global random seed
     random.seed(SEED)
 
+    boxcox_lambda = .5 # transformation is sqrt(y)
+    ts_period = 12
+    num_harmonics = 3
+    
+
+    # load time series of interarrivals (specified in SECONDS)
+    df = pd.read_csv(INTERARRIVALS_FILE, index_col=0)
+    if df is None:
+        return
+    # otherwise
+    transformed_data = boxcox(1/df['y'], boxcox_lambda)
+
+    ucm = UnobservedComponents(
+        transformed_data,
+        level='fixed intercept',
+        freq_seasonal=[
+            {'period': ts_period,'harmonics': num_harmonics},
+        ],
+        autoregressive=1,
+    )
+    fitted_ts = ucm.fit(disp=False)
+
+
     # # create environment
-    env = simpy.Environment() 
+    env = simpy.Environment()
 
     # set up service operation and run simulation until  
-    S = ServiceOperation(env=env)
+    S = ServiceOperation(env=env, ts=fitted_ts, ts_period=ts_period,
+        thinning_random=thinning_random, boxcox_lambda=boxcox_lambda,
+        use_actual_interarrivals=True)
     env.run(until=SIMULATION_DURATION)
     # # logging.debug(S.assign_risklevel() )
 

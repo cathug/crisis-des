@@ -1,5 +1,5 @@
 # OpenUp Queue Model readme
-last updated: Feb 17, 2021
+last updated: Mar 8, 2021
 
 ---
 
@@ -7,13 +7,9 @@ last updated: Feb 17, 2021
 This repository contains all the files for to simulate OpenUp service desk
 operation.
 
-Two models are now available:
-
-The first version `queue_simulation.py` incorporates interrupts to sign in and
-sign out counsellors.  
-
-In this version, counsellors do not have to work overtime and are allowed to 
-have a meal break during `AM`, `PM`, and `Special` shifts.
+The file `queue_simulation.py` incorporates interrupts to sign in and
+sign out counsellors.  Counsellors do not have to work overtime and are 
+allowed to have a meal break during `AM`, `PM`, and `Special` shifts.
 This break is currently set to `60 minutes`. During the graveyard shift,
 the meal break is actually a `180-minute` "nap time".
 No more new cases are assigned to counsellors who are `30 minutes` away from
@@ -32,15 +28,9 @@ worker is on duty while the other takes a nap.  In making sure the operation is
 manned by at least one person during one-hour meal breaks, all four-hour
 volunteer shifts are also spaced intervals apart from the paid worker shifts.
 
-The second version `queue_simulation2.py` does not factor in breaks.
-Also in this version, counsellors may be required to work overtime.
+The polling version (non-interrupt version `queue_simulation2.py`) will be
+phased out by the next update.
 
-The uptake of cases depends on the assigned user chat time.  
-The counsellor will only serve the user if the case be served within the 
-`remaining shift duration` - `30-minute` cutoff time.
-While in reality counsellors cannot predict the chat time, this sentinel is
-needed to prevent the rare edge case whereby counsellors handle marathon cases
-many minutes (days) beyond their assigned signoff time.
 
 `queue_interarrival_service_duration_exploration.ipynb` is added to produce
 the descriptive statistics, to explore the data distributions of renege time,
@@ -82,15 +72,25 @@ show that the discrepency of the chat duration by risklevel is greatest.
 In preparation for journal submissions, in the code all variables containing 
 the prefix or suffix `helpseeker` are replaced with the term `user`.
 
-Diagram formatting is slightly revised.  Pandas and Numpy libraries are used 
-to speed up multiprocessing during bootstrap.  Interarrivals folder now contains
-the last three months of interarrival data from Sep 2020 to Nov 2020.
-Timestamps now account for HKT.  The older version of the interarrivals file,
-designed for previous iterations of the `ServiceOperation` Class, 
-has been removed from the repository since February 2021.
+Diagram formatting has been revised.  Pandas and Numpy libraries are used 
+to speed up multiprocessing during bootstrap.  Interarrivals folder contains
+the **actual** interarrival data from Nov 2020, which can be used to simulate
+approximate manpower needed to handle users for the paper.
+
+In earlier iterations, interarrivals times were generated from a list of mean
+interarrivals, read in from a csv file.  This version has been been phased out
+and removed from the repository since March 2021.
 
 With multiprocessing implemented to run the simulation, in 
-`queue_simulation.py` and `queue_simulation2.py` the renege time and
-chat time distributions have been revised to follow the log normal and
-gamma distributions, allowing simulations to better emulate actual SO
-conditions.
+`queue_simulation.py` the renege time and chat time distributions
+have been revised to follow the gamma distribution, allowing simulations
+to better emulate actual SO conditions.
+
+`ServiceOperation.assign_interarrival_time()` has been rewritten to allow
+sequence of arrivals to be generated using the thinning algorithm.  It 
+can a **long time** to produce results, so when thinning is specified, 
+please lower the number of bootstrap iterations when simulating results.
+
+The layouts and diagrams in `queue_interarrival_service_duration_exploration.ipynb`
+have been revised.  All diagrams have been updated for the preparation of the
+paper.
