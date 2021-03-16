@@ -1,5 +1,5 @@
 # OpenUp Queue Model readme
-last updated: Mar 8, 2021
+last updated: Mar 9, 2021
 
 ---
 
@@ -17,6 +17,9 @@ the end shift time.  They will be required to finish
 up their existing cases until the shift ends, upon which ongoing cases will be
 forwarded back to the waiting queue.
 
+Please use the version `queue_simulation_zombies.py` when zombie cases have to
+be included in the simulation.
+
 The use of `interrupts` at specific intervals forces Counsellors to always take 
 the break and sign out at a prescribed time.  Their clients will be transferred
 to the waiting queue and wait to be served by another available counsellor, or 
@@ -28,8 +31,8 @@ worker is on duty while the other takes a nap.  In making sure the operation is
 manned by at least one person during one-hour meal breaks, all four-hour
 volunteer shifts are also spaced intervals apart from the paid worker shifts.
 
-The polling version (non-interrupt version `queue_simulation2.py`) will be
-phased out by the next update.
+The polling version (non-interrupt version `queue_simulation2.py`) has been
+phased out and will not be updated in the future.
 
 
 `queue_interarrival_service_duration_exploration.ipynb` is added to produce
@@ -46,7 +49,7 @@ to set up one if you haven't already done so.
 + `jupyter-core` >=4.5 and associated data science packages if running Jupyter 
 Notebook file
 + `numpy` ~=1.19 and `pandas` ~=1.1
-
++ `python` >=3.7
 ---
 
 

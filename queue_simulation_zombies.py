@@ -70,8 +70,8 @@ MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
 SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes 
                                             #     per day * num days in month
 
-POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
-
+POSTCHAT_FILLOUT_TIME_IF_SERVED = 20        # time to fill out counsellor postchat if user has been served
+POSTCHAT_FILLOUT_TIME_IF_RENEGED = 5        # time to fill out counsellor postchat if user has reneged
 
 # # counsellor average chat no longer than 60 minutes
 # # meaning differences between types of 1/mean_chat_duration will be negligible
@@ -84,7 +84,7 @@ POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postch
 
 
 MEAL_BREAK_DURATION = 60                    # 60 minute meal break
-LAST_CASE_CUTOFF = 30                       # do not assign any more cases 30 minutes before signoff
+LAST_CASE_CUTOFF = 10                       # do not assign any more cases 30 minutes before signoff
 
 LEN_CIRCULAR_ARRAY = 20000                  # length of circular array
 MAX_CHAT_DURATION = 60 * 11                 # longest chat duration is 11 hours (from OpenUp 1.0)
@@ -223,6 +223,14 @@ class Risklevels(enum.Enum):
         ( .097, 2.17, 5.32, 250.6 ) )
     LOW =       ('LOW',     ( .891, 1.67, 4.64, 190.5 ),
         ( .897, 1.67, 4.64, 190.5 ) )
+    # CRISIS =    ('CRISIS',  ( .0,  1.67, 4.64, 152.4 ), 
+    #     ( .0,   1.67, 4.64, 190.5 ) )
+    # HIGH =      ('HIGH',    ( .007, 1.67, 4.64, 152.4 ),
+    #     ( .006, 1.67, 4.64, 190.5 ) )
+    # MEDIUM =    ('MEDIUM', ( .102, 1.67, 4.64, 152.4 ),
+    #     ( .097, 1.67, 4.64, 190.5 ) )
+    # LOW =       ('LOW',     ( .891, 1.67, 4.64, 152.4 ),
+    #     ( .897, 1.67, 4.64, 190.5 ) )
 
     def __init__(self, risk,
         non_repeated_user_data, repeated_user_data):
@@ -336,7 +344,8 @@ class ServiceOperation:
         social_worker_shifts,
         ts, ts_period, thinning_random,
         boxcox_lambda=None, 
-        postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
+        postchat_fillout_time_if_served=POSTCHAT_FILLOUT_TIME_IF_SERVED,
+        postchat_fillout_time_if_reneged=POSTCHAT_FILLOUT_TIME_IF_RENEGED,
         meal_break_duration=MEAL_BREAK_DURATION,
         valid_chat_threshold=VALIDATE_CHAT_THRESHOLD,
         use_actual_interarrivals=False):
@@ -360,8 +369,8 @@ class ServiceOperation:
                 boxcox_lambda - the fitted lambda variable, if available
                     default is set to None
 
-                postchat_fillout_time - Time alloted to complete the counsellor postchat
-                    if not specified, defaults to POSTCHAT_FILLOUT_TIME
+                postchat_fillout_time_if_served - Time alloted to complete the counsellor
+                    postchat.  If not specified, defaults to POSTCHAT_FILLOUT_TIME_IF_SERVED
 
                 meal_break_duration - Meal break duration in minutes.
                     If not specified, defaults to MEAL_BREAK_DURATION
@@ -381,7 +390,8 @@ class ServiceOperation:
 
         self.env = env
 
-        self.__counsellor_postchat_survey_time = postchat_fillout_time
+        self.__counsellor_postchat_survey_time_if_served = postchat_fillout_time_if_served
+        self.__counsellor_postchat_survey_time_if_reneged = postchat_fillout_time_if_reneged
         self.__meal_break = meal_break_duration
 
 
@@ -971,7 +981,7 @@ class ServiceOperation:
         self.users_in_system.append(user_id)
         self.user_queue.append(user_id)
         cumulative_chat_time = 0
-        chat_finished = False
+        user_reneged = False # if user reneged, this is set to True
 
 
         while chat_duration:
@@ -986,6 +996,8 @@ class ServiceOperation:
 
             results = yield counsellor | self.env.timeout(renege_time)
             
+
+
             # record the time spent in the queue
             current_time = self.env.now
             time_spent_in_queue = current_time - start_time
@@ -1006,7 +1018,7 @@ class ServiceOperation:
                         'time_spent_in_queue': time_spent_in_queue,
                     })
 
-            else:
+            else: # if user has reneged
                 if not transfer_case:
                     self.renege_time_stats.append({
                         'weekday': weekday,
@@ -1021,6 +1033,8 @@ class ServiceOperation:
                     })
 
 
+
+
             # dequeue user in the waiting queue
             self.user_queue.remove(user_id) 
             current_user_queue_length = len(self.user_queue)
@@ -1032,7 +1046,6 @@ class ServiceOperation:
                 logging.debug(f'Updated max queue length to '
                     f'{self.user_queue_max_length}.\n'
                     f'User Queue: {self.user_queue}\n\n\n')
-
 
             # update queue status
             if current_user_queue_length >= QUEUE_THRESHOLD:
@@ -1056,6 +1069,7 @@ class ServiceOperation:
             logging.debug(f'Current User Queue contains: {self.user_queue}')
 
 
+
             # store number of available counsellor processes at current timestamp
             self.num_available_counsellor_processes.append(
                 (self.env.now, len(self.store_counsellors_active.items) )
@@ -1065,19 +1079,18 @@ class ServiceOperation:
 
             if counsellor not in results: # if user reneged
                 counsellor.cancel() # cancel counsellor request
+                chat_duration = 0
 
                 # remove user from system record
                 self.users_in_system.remove(user_id)
                 if not transfer_case:
                     self.reneged += 1 # update counter
-                    log_string = f'{Colors.HBLUE}No counsellor picked up this case{Colors.HEND}'
+                    log_string = f'{Colors.HBLUE}No counsellor has picked up the case before user reneged.{Colors.HEND}'
                 else:
                     self.reneged_during_transfer += 1
                     self.case_chat_time.append(cumulative_chat_time)
                     if cumulative_chat_time >= self.valid_chat_threshold:
                         self.served_g_valid += 1
-                    
-
                     log_string = f'{Colors.HBLUE}The session lasted {cumulative_chat_time:.3f} minutes.\n\n{Colors.HEND}'
 
                 logging.debug(f'{Colors.HRED}**************************************************************************{Colors.HEND}')
@@ -1088,8 +1101,36 @@ class ServiceOperation:
 
                 logging.debug(f'Users in system: {self.users_in_system}')
 
-                chat_duration = 0
 
+                # wait for counsellor to enter chatroom and terminate case
+                with self.store_counsellors_active.get(
+                    lambda x: case_cutoff(x) and get_counsellor(x, risklevel)
+                ) as counsellor:
+                
+                    counsellor_instance = yield counsellor # wait for counsellor to cancel case
+                    counsellor_instance.client_id = user_id
+                    
+                    try:
+                        # counsellor has to enter chatroom to cancel case
+                        # and fill out counsellor postchat
+                        if transfer_case:
+                            yield self.env.timeout(self.__counsellor_postchat_survey_time_if_served)
+                        else:
+                            yield self.env.timeout(self.__counsellor_postchat_survey_time_if_reneged)
+                        
+                    except simpy.Interrupt as si:
+                        if isinstance(si.cause, tuple) and si.cause[0] in [JobStates.SIGNOUT, JobStates.MEAL_BREAK]:
+                            logging.debug(f'{Colors.YELLOW}**************************************************************************{Colors.HEND}')
+                            logging.debug(f'{Colors.YELLOW}Counsellor {counsellor_instance.counsellor_id} left User {user_id}\'s\n'
+                                f'reneged counselling session and {si.cause[0].status} at {self.env.now:.3f} ({self.env.now%MINUTES_PER_DAY:.3f}).\n{Colors.HEND}')
+                            logging.debug(f'{Colors.YELLOW}**************************************************************************{Colors.HEND}\n')
+                            counsellor_instance.client_id = None
+                    
+                    else:
+                        # counsellor resource is now available
+                        counsellor_instance.client_id = None
+                        yield self.store_counsellors_active.put(counsellor_instance)                      
+                
 
             else: # if counsellor takes in a user
                 chat_start_time = self.env.now
@@ -1111,14 +1152,14 @@ class ServiceOperation:
                         self.served_g_regular += 1
 
 
-                chat_complete = None
+                chat_complete = None # flag to determine if chat is complete before postchat survey 
                 try:
-                    # timeout is chat duration + self.__counsellor_postchat_survey_time 
+                    # timeout is chat duration + self.__counsellor_postchat_survey_time_if_served 
                     # minutes to fill out postchat survey
                     chat = yield self.env.timeout(chat_duration)
                     chat_complete = True
                     fill_postchat = yield self.env.timeout(
-                        self.__counsellor_postchat_survey_time,
+                        self.__counsellor_postchat_survey_time_if_served,
                         value=self.env.now
                     ) # if triggered, store timestamp
                     
@@ -1128,6 +1169,7 @@ class ServiceOperation:
 
                         counsellor_to_sign_out = si.cause[-1]
                         if counsellor_instance is counsellor_to_sign_out:
+                            counsellor_instance.client_id = None # so user process will not be interrupted again
 
                             if chat_complete is True:
                                 elapsed = chat_duration
@@ -1154,7 +1196,7 @@ class ServiceOperation:
                                 if cumulative_chat_time >= self.valid_chat_threshold:
                                     self.served_g_valid += 1
 
-                                chat_duration = 0
+                                # chat_duration = 0
                                 log_string = f'{Colors.HBLUE}The session lasted {cumulative_chat_time:.3f} minutes.\n\n{Colors.HEND}'
 
 
@@ -1470,10 +1512,10 @@ def main():
     # from 3pm to 7pm
     # from 6pm to 10pm
     volunteer_shifts = [
-        CounsellorShift(Shifts.GRAVEYARD, Roles.VOLUNTEER, True, 1200, 1440, 3),
-        CounsellorShift(Shifts.AM, Roles.VOLUNTEER, False, 630, 870, 2),
-        CounsellorShift(Shifts.PM, Roles.VOLUNTEER, False, 900, 1140, 2),
-        CounsellorShift(Shifts.SPECIAL, Roles.VOLUNTEER, False, 1080, 1320, 4),
+        CounsellorShift(Shifts.GRAVEYARD, Roles.VOLUNTEER, True, 1200, 1440, 1),
+        CounsellorShift(Shifts.AM, Roles.VOLUNTEER, False, 630, 870, 1),
+        CounsellorShift(Shifts.PM, Roles.VOLUNTEER, False, 900, 1140, 1),
+        CounsellorShift(Shifts.SPECIAL, Roles.VOLUNTEER, False, 1080, 1320, 1),
     ]
 
 
@@ -1493,9 +1535,9 @@ def main():
     social_worker_shifts = [
         CounsellorShift(Shifts.GRAVEYARD, Roles.SOCIAL_WORKER, True, 1290, 1890, 1),
         CounsellorShift(Shifts.GRAVEYARD, Roles.SOCIAL_WORKER2, True, 1290, 1890, 1),
-        CounsellorShift(Shifts.AM, Roles.SOCIAL_WORKER, False, 435, 915, 2),
-        CounsellorShift(Shifts.PM, Roles.SOCIAL_WORKER, False, 840, 1320, 2),
-        CounsellorShift(Shifts.SPECIAL, Roles.SOCIAL_WORKER, True, 1020, 1500, 3),
+        CounsellorShift(Shifts.AM, Roles.SOCIAL_WORKER, False, 435, 915, 1),
+        CounsellorShift(Shifts.PM, Roles.SOCIAL_WORKER, False, 840, 1320, 1),
+        CounsellorShift(Shifts.SPECIAL, Roles.SOCIAL_WORKER, True, 1020, 1500, 1),
     ]
 
 
