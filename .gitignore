@@ -19,7 +19,7 @@ interarrivals_day_of_week_hour/Oct2020_to_Nov2020/
 library_versions.ipynb
 paper_2020_03_16.docx
 paper_2020_03_16.pdf
-real_interarrivals_nov.csv
+# real_interarrivals_nov.csv
 seasonality.ipynb
 simulation_cost_conversion.ods
 table.csv
@@ -29,7 +29,7 @@ user_states.gv
 community_kitchen/
 breakdown-template*
 *.xlsx
-*.csv
+repeated*.csv
 img_output/
 interarrivals_day_of_week*
 queue_simulation_paper
