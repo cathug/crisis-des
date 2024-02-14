@@ -30,6 +30,7 @@ from scipy.special import inv_boxcox
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
+import datetime
 
 
 logging.basicConfig(
@@ -45,7 +46,7 @@ NOV_INTERARRIVALS = os.path.expanduser(
 
 
 INTERARRIVALS_FILE = os.path.expanduser(
-    '~/csrp/openup-queue-simulation/interarrivals_day_of_week_hour/Oct2020_to_Nov2020/interarrivals_day_of_week_hour.csv')
+    '~/csrp/openup-queue-simulation/interarrivals_day_of_week_hour/Jul2020_to_Nov2020/interarrivals_day_of_week_hour.csv')
 
 ################################################################################ 
 # Globals
@@ -63,25 +64,15 @@ MAX_SIMULTANEOUS_CHATS = {
 }    
 
 SEED = 728                                  # for seeding the global sudo-random generator
-THINNING_SEED = 305                         # for seeding the thing algo sudo-random generator
-OFFSET = 744
+THINNING_SEEDS = (308, 408)                 # for seeding the thing algo sudo-random generator
 
 MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR     # 1440 minutes per day
-SIMULATION_DURATION = MINUTES_PER_DAY * 30  # currently given as num minutes 
+NUM_SIMULATION_DAYS = 30
+SIMULATION_DURATION = MINUTES_PER_DAY * NUM_SIMULATION_DAYS  
+                                            # currently given as num minutes 
                                             #     per day * num days in month
 
 POSTCHAT_FILLOUT_TIME = 20                  # time to fill out counsellor postchat
-
-
-# # counsellor average chat no longer than 60 minutes
-# # meaning differences between types of 1/mean_chat_duration will be negligible
-# MEAN_CHAT_DURATION_COUNSELLOR = {
-#     'SOCIAL_WORKER': 51.4,                  # Social Worker - average 51.4 minutes
-#     'SOCIAL_WORKER2': 51.4,                  # Social Worker - average 51.4 minutes
-#     'DUTY_OFFICER': 56.9,                   # Duty Officer - average 56.9 minutes
-#     'VOLUNTEER': 57.2,                      # Volunteer - average 57.2 minutes
-# }
-
 
 MEAL_BREAK_DURATION = 60                    # 60 minute meal break
 LAST_CASE_CUTOFF = 30                       # do not assign any more cases 30 minutes before signoff
@@ -97,7 +88,7 @@ VALIDATE_CHAT_THRESHOLD = 7.5               # time elapsed in minutes to have a 
 
 class Colors:
     '''
-        Color codes for terminal
+    Color codes for terminal
     '''
     GREEN =  '\033[32m'
     RED =  '\033[91m'
@@ -113,9 +104,22 @@ class Colors:
 
 #-------------------------------------------------------------------------------
 
+class ArrivalRateType(enum.IntEnum):
+    '''
+    Special enum type to access arrival rate type in
+    ExpectedArrivals().expected_arrival_rate (a list)
+
+    This verbose way to specify list indexes will make code more readable
+    '''
+    MEAN = 0    # expected arrival rate
+    LOWER = 1   # expected + lower CI
+    UPPER = 2   # expected + upper CI
+
+#-------------------------------------------------------------------------------
+
 class Shifts(enum.Enum):
     '''
-        Enum Shifts
+    Enum Shifts
     '''
     GRAVEYARD   = enum.auto()
     AM          = enum.auto()
@@ -126,7 +130,7 @@ class Shifts(enum.Enum):
 
 class Roles(enum.Enum):
     '''
-        Counsellor Roles
+    Counsellor Roles
     '''
 
     SOCIAL_WORKER   = ('SOCIAL_WORKER',   True,   True, False)
@@ -139,8 +143,6 @@ class Roles(enum.Enum):
         first_tea_break, last_tea_break):
         self.counsellor_type = counsellor_type
         self.num_processes = MAX_SIMULTANEOUS_CHATS.get(counsellor_type)
-        # self.mean_chat_duration = MEAN_CHAT_DURATION_COUNSELLOR.get(
-        #     counsellor_type)
         self.meal_break = meal_break
         self.first_tea_break = first_tea_break
         self.last_tea_break = last_tea_break
@@ -150,8 +152,8 @@ class Roles(enum.Enum):
 @dataclass
 class CounsellorShift:
     '''
-        CounsellorShift dataclass or struct
-        documenting shift, role, start and end time of the shift
+    CounsellorShift dataclass or struct
+    documenting shift, role, start and end time of the shift
     '''
     shift: Shifts       # one of Shifts enum
     role: Roles         # one of Roles enum
@@ -169,8 +171,8 @@ class CounsellorShift:
     @property
     def meal_start(self):
         '''
-            define lunch as the midpoint of shift
-            which is written to minimize underflow and overflow problems
+        define lunch as the midpoint of shift
+        which is written to minimize underflow and overflow problems
         '''
         if self.role is Roles.VOLUNTEER or self.role.meal_break is False:
             return None
@@ -190,12 +192,12 @@ class CounsellorShift:
 
 class JobStates(enum.Enum):
     '''
-        Counsellor in three states:
-        counselling, eating lunch, and signout,
-        each of which are given different priorities (must be integers)
+    Counsellor in three states:
+    counselling, eating lunch, and signout,
+    each of which are given different priorities (must be integers)
 
-        The higher the priority, the lower the value 
-        (10 has higher priority than 20)
+    The higher the priority, the lower the value 
+    (10 has higher priority than 20)
     '''
 
     SIGNOUT =       ('SIGN_OUT', 'signed out',              10)
@@ -211,7 +213,7 @@ class JobStates(enum.Enum):
 
 class Risklevels(enum.Enum):
     '''
-        Distribution of LOW/MEDIUM/HIGH/CRISIS
+    Distribution of LOW/MEDIUM/HIGH/CRISIS
     '''
     # nested tuple order - p, alpha, beta, shape
     # risk enum | risklevel | non-repeated data | repeated data
@@ -242,31 +244,48 @@ class Risklevels(enum.Enum):
 
 class Users(enum.Enum):
     '''
-        Distribution of Repeated Users - 71.2% regular / 28.8% repeated
-        among the users accepting TOS
+    Distribution of Repeated Users - 71.2% regular / 28.8% repeated
+    among the users accepting TOS
     '''
     # nested tuple order - p, mean, variance
-    # user enum | user status | user index | probability, alpha, beta, loc, shape
-    REPEATED =      ('REPEATED_USER',       1,
-        ( .288, .588, 29.1, .174, 351.1 ) )
-    NON_REPEATED =  ('NONREPEATED_USER',    2,
-        ( .712, .739, 3.31, .175, 13.6 ) )
+    # user enum | user status | user index | probability, mean patience
+    REPEATED =      ('REPEATED_USER',       1, (.288, 5.29) )
+    NON_REPEATED =  ('NONREPEATED_USER',    2, (.712, 3.45) )
     
     def __init__(self, user_type, index, user_data):
         self.user_type = user_type
         self.index = index # index to access Risklevel probability
         self.probability = user_data[0]
+        self.mean_patience = user_data[1]
 
-        self.alpha_renege_time = user_data[1]
-        self.beta_renege_time = user_data[2]
-        self.loc_renege_time = user_data[3]
-        self.shape_renege_time = user_data[4]
+
+
+# class Users(enum.Enum):
+#     '''
+#     Distribution of Repeated Users - 71.2% regular / 28.8% repeated
+#     among the users accepting TOS
+#     '''
+#     # nested tuple order - p, mean, variance
+#     # user enum | user status | user index | probability, alpha, beta, loc, shape
+#     REPEATED =      ('REPEATED_USER',       1,
+#         ( .288, .588, 29.1, .174, 351.1 ) )
+#     NON_REPEATED =  ('NONREPEATED_USER',    2,
+#         ( .712, .739, 3.31, .175, 13.6 ) )
+    
+#     def __init__(self, user_type, index, user_data):
+#         self.user_type = user_type
+#         self.index = index # index to access Risklevel probability
+#         self.probability = user_data[0]
+#         self.alpha_renege_time = user_data[1]
+#         self.beta_renege_time = user_data[2]
+#         self.loc_renege_time = user_data[3]
+#         self.shape_renege_time = user_data[4]
 
 #-------------------------------------------------------------------------------
 
 class TOS(enum.Enum):
     '''
-        TOS States - here "TOS REJECTED" includes all "TOS NOT ACCEPTED" cases
+    TOS States - here "TOS REJECTED" includes all "TOS NOT ACCEPTED" cases
     '''
 
     # TOS enum | TOS status
@@ -281,18 +300,128 @@ class TOS(enum.Enum):
 # Classes
 ################################################################################
 
+class ExpectedArrivals:
+    '''
+    Class to create expected arrivals for prospective simulation
+    '''
+
+    def __init__(self, ts_period=12, num_harmonics=6):
+        # load time series of interarrivals (specified in SECONDS)
+        df = pd.read_csv(
+            INTERARRIVALS_FILE, index_col=0, parse_dates=['ds'])
+        self.start, self.stop = self.get_rolling_window_datetime_range(df)
+        self.ts_period = ts_period
+
+        df.set_index('ds', inplace=True)
+        df.index.freq = df.index.inferred_freq # infer this frequency
+        
+        window = df[(df.index>=self.start) & (df.index<self.stop)].copy()
+        window['transformed'], boxcox_lambda = boxcox(window['y'])
+
+        ucm = UnobservedComponents(
+            window['transformed'],
+            level='local level',
+            freq_seasonal=[
+                {'period': ts_period,'harmonics': num_harmonics},
+            ],
+            stochastic_freq_seasonal=[False, ],
+            autoregressive=1,
+            loglikelihood_burn=12,
+            mle_regression=True
+        )
+        self.fitted_ts = ucm.fit(disp=False, maxiter=1000)
+        forecast_bc_interarrival_time = self.fitted_ts.get_forecast(
+            steps=NUM_SIMULATION_DAYS*self.ts_period,
+            exog=[False for _ in range(NUM_SIMULATION_DAYS*self.ts_period)]
+        )
+        back_transformed_interarrival_time_mean = self.backtransformed_mean(
+            forecast_bc_interarrival_time.predicted_mean,
+            forecast_bc_interarrival_time.var_pred_mean, 
+            boxcox_lambda
+        )
+
+        summary_frame = forecast_bc_interarrival_time.summary_frame()
+        back_transformed_interarrival_time_lower = self.backtransformed_mean(
+            summary_frame.mean_ci_lower,
+            0, 
+            boxcox_lambda
+        )
+
+        back_transformed_interarrival_time_upper = self.backtransformed_mean(
+            summary_frame.mean_ci_upper,
+            0, 
+            boxcox_lambda
+        )
+        
+        # flip the bounds since inverse of lower bound becomes upper bound,
+        # and vice versa
+        mean = 1/back_transformed_interarrival_time_mean
+        lower = 1/back_transformed_interarrival_time_upper # this becomes lower ci
+        upper = 1/back_transformed_interarrival_time_lower # this becomes lower upper ci
+        
+
+        # must be specified in this order to match ArrivalRateType enum values
+        self.expected_arrival_rate = [mean, lower, upper]
+        self.size = len(mean)
+
+    #---------------------------------------------------------------------------
+
+    def backtransformed_mean(self, transformed_mu, variance, lambda_):
+        '''
+        Function to back transform the box-cox transformed mu
+
+        param:  
+            transformed _mu - the boxcox transformed mu
+            variance - the variance of mu
+            lambda - boxcox lambda
+
+        returns: the back-transformed mean
+        '''
+        if lambda_ == 0:
+            y_expected = np.exp(transformed_mu) * (1 + variance/2)
+        else:
+            y_expected = np.power(
+                lambda_*transformed_mu + 1, 1/lambda_) *(
+                1 + ( variance * (1-lambda_)/(
+                    2*(lambda_*transformed_mu + 1)**2 )
+            ))
+        return y_expected
+
+    #---------------------------------------------------------------------------
+
+    def get_rolling_window_datetime_range(self, df):
+        '''
+        Function to get the rolling window datetime range from the
+        interarrivals dataframe
+
+        param: 
+            df - the interarrivals dataframe loaded from the csv file
+
+        returns: tuple of datetime objects [first, last)
+        '''
+
+        first_entry = df['ds'].iloc[0]
+        last_entry = df['ds'].iloc[-1]
+        
+        lower = datetime.datetime(first_entry.year, first_entry.month, 1, 0)
+        upper = datetime.datetime(last_entry.year, last_entry.month, 1, 0)
+
+        return lower, upper
+        
+
+#-------------------------------------------------------------------------------
+
 class Counsellor:
     '''
-        Class to create counsellor instances
+    Class to create counsellor instances
 
-        each counsellor is assigned a role, an id, a shift, 
-        and an adhoc duty shift (if available)
+    each counsellor is assigned a role, an id, a shift, 
+    and an adhoc duty shift (if available)
     '''
 
     def __init__(self, env, counsellor_id, counsellor_shift):
         '''
-            param:
-
+        param:
             env - simpy environment instance
             counsellor_id - an assigned counsellor id (STRING)
             counsellor_shift - CounsellorShift DataClass instance
@@ -323,59 +452,66 @@ class Counsellor:
 
 class ServiceOperation:
     '''
-        Class to emulate OpenUp Service Operation with a limited number of 
-        counsellors to handle user chat requests during different shifts
+    Class to emulate OpenUp Service Operation with a limited number of 
+    counsellors to handle user chat requests during different shifts
 
-        Users have to request a counsellor to begin the counselling
-        process
+    Users have to request a counsellor to begin the counselling
+    process
     '''
 
-    def __init__(self, *, env, 
-        volunteer_shifts,
-        duty_officer_shifts,
-        social_worker_shifts,
-        ts, ts_period, thinning_random,
-        boxcox_lambda=None, 
-        postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
-        meal_break_duration=MEAL_BREAK_DURATION,
-        valid_chat_threshold=VALIDATE_CHAT_THRESHOLD,
-        use_actual_interarrivals=False):
+    def __init__(self, *,
+                 env, 
+                 volunteer_shifts,
+                 duty_officer_shifts,
+                 social_worker_shifts,
+                 arrivals,
+                 arrival_rate_type=ArrivalRateType.MEAN,
+                 postchat_fillout_time=POSTCHAT_FILLOUT_TIME,
+                 meal_break_duration=MEAL_BREAK_DURATION,
+                 valid_chat_threshold=VALIDATE_CHAT_THRESHOLD,
+                 use_actual_interarrivals=False):
 
         '''
-            init function
+        init function
 
-            param:
-                env - simpy environment
+        param:
+            env - simpy environment
 
-                volunteer_shifts - list of CounsellorShift instances
+            volunteer_shifts - list of CounsellorShift instances
 
-                duty_officer_shifts - list of CounsellorShift instances
+            duty_officer_shifts - list of CounsellorShift instances
 
-                social_worker_shifts - list of CounsellorShift instances
+            social_worker_shifts - list of CounsellorShift instances
 
-                ts - fitted time series model (a statsmodel object)
+            arrivals - ExpectedArrivals object
 
-                ts_period - period in the specified time series (an integer)
+            arrival_rate_type - one of ArrivalRateType Enum
 
-                boxcox_lambda - the fitted lambda variable, if available
-                    default is set to None
+            postchat_fillout_time - Time alloted to complete the counsellor 
+                postchat
+                if not specified, defaults to POSTCHAT_FILLOUT_TIME
 
-                postchat_fillout_time - Time alloted to complete the counsellor postchat
-                    if not specified, defaults to POSTCHAT_FILLOUT_TIME
+            meal_break_duration - Meal break duration in minutes.
+                If not specified, defaults to MEAL_BREAK_DURATION
 
-                meal_break_duration - Meal break duration in minutes.
-                    If not specified, defaults to MEAL_BREAK_DURATION
+            valid_chat_threshold - how much time elapsed before case is counted
+                as valid chat
 
-                valid_chat_threshold - how much time elapsed before case is counted as valid chat
+            use_actual_interarrivals - True if using actual interarrivals for
+                retrospective simulation
         '''
 
         if use_actual_interarrivals:
             self.interarrivals = self.read_interarrival_time()
+        else:
+            self.interarrivals = None
+            # seed for thinning algorithm
+            self.thinning_random = (random.Random(), random.Random() )
+            self.thinning_random[0].seed(THINNING_SEEDS[0])
+            self.thinning_random[1].seed(THINNING_SEEDS[1])
+            self.arrival_rate_type = arrival_rate_type
 
-        self.time_series = ts
-        self.time_series_period = ts_period
-        self.boxcox_lambda = boxcox_lambda
-        self.thinning_random = thinning_random
+        self.arrivals = arrivals
 
         self.valid_chat_threshold = valid_chat_threshold
 
@@ -602,9 +738,9 @@ class ServiceOperation:
 
     def list_counsellers(self, counsellor_shift):
         '''
-            subroutine to create list of counsellors with a certain counsellor shift
+        subroutine to create list of counsellors with a certain counsellor shift
 
-            param:
+        param:
             counsellor_shift - CounsellorShift DataClass
         '''            
 
@@ -622,9 +758,9 @@ class ServiceOperation:
 
     def counsellors_signin(self, counsellor_shift):
         '''
-            routine to sign in counsellors during a shift
+        routine to sign in counsellors during a shift
 
-            param:
+        param:
             counsellor_shift - CounsellorShift DataClass instance
         '''
         counsellor_init = True
@@ -676,9 +812,9 @@ class ServiceOperation:
 
     def counsellors_signout(self, counsellor_shift):
         '''
-            routine to sign out counsellors during a shift
+        routine to sign out counsellors during a shift
 
-            param:
+        param:
             counsellor_shift - CounsellorShift DataClass
         '''
 
@@ -741,9 +877,9 @@ class ServiceOperation:
 
     def counsellors_break_start(self, counsellor_shift):
         '''
-            routine to start a meal break
+        routine to start a meal break
 
-            param:
+        param:
             counsellor_shift - CounsellorShift DataClass instance
         '''
 
@@ -803,10 +939,10 @@ class ServiceOperation:
 
     def counsellors_break_end(self, counsellor_shift):
         '''
-            handle to end the meal_break
+        handle to end the meal_break
 
-            param:
-            counsellor_shift - CounsellorShift DataClass instance
+        param:
+        counsellor_shift - CounsellorShift DataClass instance
         '''
 
         # delay until meal break starts
@@ -838,8 +974,8 @@ class ServiceOperation:
 
     def create_users(self):
         '''
-            function to generate users in the background
-            at "interarrival_time" invervals to mimic user interarrivals
+        function to generate users in the background
+        at "interarrival_time" invervals to mimic user interarrivals
         '''
 
         for i in itertools.count(): # use this instead of while loop 
@@ -907,21 +1043,21 @@ class ServiceOperation:
     def handle_user(self, user_id):
 
         '''
-            user process handler
+        user process handler
 
-            this function deals with "wait", "renege", and "chat" states
-            in the user state diagram
+        this function deals with "wait", "renege", and "chat" states
+        in the user state diagram
 
-            param:
-                user_id - user id (integer)
+        param:
+            user_id - user id (integer)
         '''
 
         # lambda filters
         def case_cutoff(x):
             '''
-                lambda filter for case cutoff (limiting overtime)
-                Conditionals make sure edge cases 
-                (Special and Graveyard) are being dealt with
+            lambda filter for case cutoff (limiting overtime)
+            Conditionals make sure edge cases 
+            (Special and Graveyard) are being dealt with
             '''
             current_time = self.env.now
 
@@ -935,7 +1071,7 @@ class ServiceOperation:
 
         def get_counsellor(x, risk):
             '''
-                lambda filter for get_counsellor
+            lambda filter for get_counsellor
             '''
             if risk in [Risklevels.HIGH, Risklevels.CRISIS]:
                 return x.counsellor_shift.role in [
@@ -947,12 +1083,12 @@ class ServiceOperation:
 
         user_status = self.assign_user_status()
         risklevel = self.assign_risklevel(user_status)
-        renege_time = self.assign_renege_time(
-            user_status.alpha_renege_time,
-            user_status.beta_renege_time,
-            user_status.shape_renege_time,
-            user_status.loc_renege_time)
-        # case_status = self.assign_case_status()
+        renege_time = self.assign_renege_time(user_status.mean_patience)
+        # renege_time = self.assign_renege_time(
+        #     user_status.alpha_renege_time,
+        #     user_status.beta_renege_time,
+        #     user_status.shape_renege_time,
+        #     user_status.loc_renege_time)
 
         if user_status is Users.REPEATED:
             chat_duration = self.assign_chat_duration(
@@ -1202,54 +1338,72 @@ class ServiceOperation:
 
     def assign_interarrival_time(self, idx=None):
         '''
-            Getter to assign interarrival time using Thinning Algorithm on an
-            interval-interval basis
-            
-            interarrival time follows the exponential distribution
+        Getter to assign interarrival time
+        
+        If no interarrivals file is specified, Thinning Algorithm is used to
+        spawn a new interarrival time at an interval-interval basis
 
-            returns - interarrival time
+        Otherwise, the interarrival time in the file is used.
+            
+        interarrival time follows the exponential distribution
+
+        param:
+            idx - index (integer)
+
+        returns - interarrival time
         '''
 
+        # if idx exists and interarrivals file exists,
+        # run retropspective simulation
         if idx is not None and self.interarrivals is not None:
             end_interarrivals = len(self.interarrivals)
             return self.interarrivals[idx%end_interarrivals]
 
 
 
+        # otherwise run propspective simulations (thinning algorithm)
 
-        def get_max_arrival_rate(start_interval, end_interval):
+        def get_max_arrival_rate(day, nearest_two_hours):
             '''
-                helper function to get the arrival rate lambda at within an
-                interval range
+            helper function to get the arrival rate lambda within an
+            interval range
 
-                param:  start_interval - index to start
-                        end_interval - index to end
-
-                precondition: start_interval >= end_interval
+            param:  
+                day
+                nearest_two_hours
             '''
 
+            size = self.arrivals.size
+            arrival_rate_type = self.arrival_rate_type
+            start_idx = int(self.arrivals.ts_period * day + nearest_two_hours)
+            end_idx = start_idx + 1
+            
             # take the maximum arrival rate within interval
-            arrival_rate = self.time_series.predict(
-                start=start_interval+OFFSET, end=end_interval+OFFSET).max()
-            if self.boxcox_lambda is not None:
-                arrival_rate = inv_boxcox(
-                    arrival_rate, self.boxcox_lambda)
-            return arrival_rate
+            arrival_rate_set = self.arrivals.expected_arrival_rate[arrival_rate_type]
+            arrival_rate_1 = arrival_rate_set[start_idx%size]
+            arrival_rate_2 = arrival_rate_set[end_idx%size]
+
+            return max(arrival_rate_1, arrival_rate_2)
 
         #-----------------------------------------------------------------------
 
-        def get_arrival_rate(interval):
+        def get_arrival_rate(day, nearest_two_hours):
             '''
-                helper function to get the arrival rate lambda at the specific
-                interval
+            helper function to get the arrival rate lambda at the specific
+            interval
 
-                param:  interval - index
+            param:
+                ts_period
+                day
+                nearest_two_hours
             '''
-
-            return get_max_arrival_rate(interval+OFFSET, interval+OFFSET)
+            size = self.arrivals.size
+            arrival_rate_type = self.arrival_rate_type
+            current_idx = int(self.arrivals.ts_period * day + nearest_two_hours)
+            arrival_rate_set = self.arrivals.expected_arrival_rate[arrival_rate_type]
+            return arrival_rate_set[current_idx%size]
 
         #-----------------------------------------------------------------------
-
 
         # cast this as integer to get a rough estimate
         # calculate the nearest hour as an integer
@@ -1261,27 +1415,23 @@ class ServiceOperation:
         current_day_minutes = current_time % MINUTES_PER_DAY
         nearest_two_hours = int(current_day_minutes / 120)
 
-        local_max_idx_pt = int(self.time_series_period * current_weekday + nearest_two_hours)
-        max_idx_start = local_max_idx_pt - 1
-        max_idx_end = local_max_idx_pt + 1# self.time_series_period - 1
-        if max_idx_end > 1104:
-            max_idx_end = 1104
-
         # generate the dominant homogeneous Poisson Process
-        max_arrival_rate = get_max_arrival_rate(max_idx_start, max_idx_end)
-        homo_interarrival_time = random.expovariate(max_arrival_rate)
-        return homo_interarrival_time
-
+        max_arrival_rate = get_max_arrival_rate(
+            current_weekday, nearest_two_hours
+        )
+        homo_interarrival_time = self.thinning_random[0].expovariate(max_arrival_rate)
 
         # find idx = x+t
         next_arrival_time = current_time + homo_interarrival_time
         next_weekday = int(next_arrival_time / MINUTES_PER_DAY)
         next_arrival_time_day_minutes = next_arrival_time % MINUTES_PER_DAY
         next_nearest_two_hour_interval = int(next_arrival_time_day_minutes / 120)
-        idx = int(self.time_series_period*next_weekday + next_nearest_two_hour_interval)
     
         # calculate lambda(x+t)
-        next_arrival_rate = get_arrival_rate(idx)
+        next_arrival_rate = get_arrival_rate(
+            next_weekday,
+            next_nearest_two_hour_interval
+        )
 
         # logging.debug(f'Current time: {current_time}')
         # logging.debug(f'Current weekday: {current_weekday}')
@@ -1294,43 +1444,62 @@ class ServiceOperation:
 
 
         # decide whether to output interarrival time
-        random_num = self.thinning_random.uniform(0, 1)
+        random_num = self.thinning_random[1].uniform(0, 1)
         if random_num <= (next_arrival_rate / max_arrival_rate):
             return homo_interarrival_time
         return None
 
     #---------------------------------------------------------------------------
-
-    def assign_renege_time(self, alpha, beta, scale, loc):
+    
+    def assign_renege_time(self, mean_patience):
         '''
             Getter to assign patience to user
             user patience follows a beta distribution
 
-            param:  alpha - alpha shape parameter
-                    beta - beta shape parameter
-                    scale - scale to apply to the standardized beta distribution
+            param:
+                mean_patience - mean patience
+                beta - beta shape parameter
+                scale - scale to apply to the standardized beta distribution
 
             returns - renege time
         '''
-        renege_time = betavariate.rvs(alpha, beta, loc=loc, scale=scale)
+        renege_time = random.expovariate(1/mean_patience)
         if renege_time <= 0:
             return 0.1
         return renege_time
+
+    # def assign_renege_time(self, alpha, beta, scale, loc):
+    #     '''
+    #     Getter to assign patience to user
+    #     user patience follows a beta distribution
+
+    #     param:  
+    #         alpha - alpha shape parameter
+    #         beta - beta shape parameter
+    #         scale - scale to apply to the standardized beta distribution
+
+    #     returns - renege time
+    #     '''
+    #     renege_time = betavariate.rvs(alpha, beta, loc=loc, scale=scale)
+    #     if renege_time <= 0:
+    #         return 0.1
+    #     return renege_time
 
     #---------------------------------------------------------------------------
 
     def assign_chat_duration(self, alpha, beta, scale, loc=0):
         '''
-            Getter to assign chat duration
-            chat duration follows the beta distribution
-            with alpha and beta values derived from the OpenUp MCCIS data
+        Getter to assign chat duration
+        chat duration follows the beta distribution
+        with alpha and beta values derived from the OpenUp MCCIS data
 
-            param:  alpha - alpha shape parameter
-                    beta - beta shape parameter
-                    scale - scale to apply to the standardized beta distribution
+        param:
+            alpha - alpha shape parameter
+            beta - beta shape parameter
+            scale - scale to apply to the standardized beta distribution
 
-            returns - chat duration or MAX_CHAT_DURATION if chat time has exceeded
-                service standards
+        returns - chat duration or MAX_CHAT_DURATION if chat time has exceeded
+            service standards
         '''
         
         duration = betavariate.rvs(alpha, beta, loc=loc, scale=scale)
@@ -1345,9 +1514,9 @@ class ServiceOperation:
 
     def assign_risklevel(self, user_type):
         '''
-            Getter to assign risklevels
+        Getter to assign risklevels
 
-            param: user_type - one of either Users enum
+        param: user_type - one of either Users enum
         '''
         options = list(Risklevels)
         probability = [x.value[user_type.index][0] for x in options]
@@ -1358,7 +1527,7 @@ class ServiceOperation:
 
     def assign_user_status(self):
         '''
-            Getter to assign user status
+        Getter to assign user status
         '''
         options = list(Users)
         probability = [x.value[-1][0] for x in options]
@@ -1369,22 +1538,10 @@ class ServiceOperation:
 
     def assign_TOS_acceptance(self):
         '''
-            Getter to assign TOS status
+        Getter to assign TOS status
         '''
         
         options = list(TOS)
-        probability = [x.value[-1] for x in options]
-
-        return random.choices(options, probability)[0]
-
-    #---------------------------------------------------------------------------
-
-    def assign_case_status(self):
-        '''
-            Getter to assign TOS status
-        '''
-        
-        options = list(CaseStatus)
         probability = [x.value[-1] for x in options]
 
         return random.choices(options, probability)[0]
@@ -1395,7 +1552,7 @@ class ServiceOperation:
 
     def read_interarrival_time(self):
         '''
-            file input function to read in actual interarrivals file      
+        file input function to read in actual interarrivals file      
         '''
         try:
             with open(NOV_INTERARRIVALS, 'r') as f:
@@ -1429,35 +1586,12 @@ def main():
     logging.debug('Initializing OpenUp Queue Simulation')
     logging.debug('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
 
-    # seed for thinning algorithm
-    thinning_random = random.Random()
-    thinning_random.seed(THINNING_SEED)
-
     # global random seed
     random.seed(SEED)
     np.random.seed(SEED)
 
-    boxcox_lambda = .5 # transformation is sqrt(y)
-    ts_period = 12
-    num_harmonics = 3
-    
 
-    # load time series of interarrivals (specified in SECONDS)
-    df = pd.read_csv(INTERARRIVALS_FILE, index_col=0)
-    if df is None:
-        return
-    # otherwise
-    transformed_data = boxcox(1/df['y'], boxcox_lambda)
-
-    ucm = UnobservedComponents(
-        transformed_data,
-        level='fixed intercept',
-        freq_seasonal=[
-            {'period': ts_period,'harmonics': num_harmonics},
-        ],
-        autoregressive=1,
-    )
-    fitted_ts = ucm.fit(disp=False)
+    arrivals = ExpectedArrivals()
 
 
     # # create environment
@@ -1505,9 +1639,8 @@ def main():
         volunteer_shifts=volunteer_shifts,
         duty_officer_shifts=duty_officer_shifts,
         social_worker_shifts=social_worker_shifts,
-        ts=fitted_ts, ts_period=ts_period,
-        thinning_random=thinning_random, boxcox_lambda=boxcox_lambda,
-        use_actual_interarrivals=True, )
+        arrivals=arrivals,
+        use_actual_interarrivals=False, )
     env.run(until=SIMULATION_DURATION)
     # # logging.debug(S.assign_risklevel() )
 

@@ -4,7 +4,7 @@
 
     Users will renege when they loose patience waiting in the queue
 
-    Interrupt version - When counsellors have to sign out, an interrupt
+    Interrupt version with zombies - When counsellors have to sign out, an interrupt
     is thrown to end the existing chat process, and the helpseeker
     will be transferred to the next available counsellor or reneged
     when the user's patience dries up.  Counsellors will not work overtime.
@@ -223,14 +223,6 @@ class Risklevels(enum.Enum):
         ( .097, 2.17, 5.32, 250.6 ) )
     LOW =       ('LOW',     ( .891, 1.67, 4.64, 190.5 ),
         ( .897, 1.67, 4.64, 190.5 ) )
-    # CRISIS =    ('CRISIS',  ( .0,  1.67, 4.64, 152.4 ), 
-    #     ( .0,   1.67, 4.64, 190.5 ) )
-    # HIGH =      ('HIGH',    ( .007, 1.67, 4.64, 152.4 ),
-    #     ( .006, 1.67, 4.64, 190.5 ) )
-    # MEDIUM =    ('MEDIUM', ( .102, 1.67, 4.64, 152.4 ),
-    #     ( .097, 1.67, 4.64, 190.5 ) )
-    # LOW =       ('LOW',     ( .891, 1.67, 4.64, 152.4 ),
-    #     ( .897, 1.67, 4.64, 190.5 ) )
 
     def __init__(self, risk,
         non_repeated_user_data, repeated_user_data):
@@ -254,21 +246,39 @@ class Users(enum.Enum):
         among the users accepting TOS
     '''
     # nested tuple order - p, mean, variance
-    # user enum | user status | user index | probability, alpha, beta, loc, shape
-    REPEATED =      ('REPEATED_USER',       1,
-        ( .288, .588, 29.1, .174, 351.1 ) )
-    NON_REPEATED =  ('NONREPEATED_USER',    2,
-        ( .712, .739, 3.31, .175, 13.6 ) )
+    # user enum | user status | user index | probability, mean patience
+    REPEATED =      ('REPEATED_USER',       1, (.288, 5.29) )
+    NON_REPEATED =  ('NONREPEATED_USER',    2, (.712, 3.45) )
     
     def __init__(self, user_type, index, user_data):
         self.user_type = user_type
         self.index = index # index to access Risklevel probability
         self.probability = user_data[0]
+        self.mean_patience = user_data[1]
 
-        self.alpha_renege_time = user_data[1]
-        self.beta_renege_time = user_data[2]
-        self.loc_renege_time = user_data[3]
-        self.shape_renege_time = user_data[4]
+
+
+# class Users(enum.Enum):
+#     '''
+#         Distribution of Repeated Users - 71.2% regular / 28.8% repeated
+#         among the users accepting TOS
+#     '''
+#     # nested tuple order - p, mean, variance
+#     # user enum | user status | user index | probability, alpha, beta, loc, shape
+#     REPEATED =      ('REPEATED_USER',       1,
+#         ( .288, .588, 29.1, .174, 351.1 ) )
+#     NON_REPEATED =  ('NONREPEATED_USER',    2,
+#         ( .712, .739, 3.31, .175, 13.6 ) )
+    
+#     def __init__(self, user_type, index, user_data):
+#         self.user_type = user_type
+#         self.index = index # index to access Risklevel probability
+#         self.probability = user_data[0]
+
+#         self.alpha_renege_time = user_data[1]
+#         self.beta_renege_time = user_data[2]
+#         self.loc_renege_time = user_data[3]
+#         self.shape_renege_time = user_data[4]
 
 #-------------------------------------------------------------------------------
 
@@ -957,12 +967,12 @@ class ServiceOperation:
 
         user_status = self.assign_user_status()
         risklevel = self.assign_risklevel(user_status)
-        renege_time = self.assign_renege_time(
-            user_status.alpha_renege_time,
-            user_status.beta_renege_time,
-            user_status.shape_renege_time,
-            user_status.loc_renege_time)
-        # case_status = self.assign_case_status()
+        renege_time = self.assign_renege_time(user_status.mean_patience)
+        # renege_time = self.assign_renege_time(
+        #     user_status.alpha_renege_time,
+        #     user_status.beta_renege_time,
+        #     user_status.shape_renege_time,
+        #     user_status.loc_renege_time)
 
         if user_status is Users.REPEATED:
             chat_duration = self.assign_chat_duration(
@@ -1343,21 +1353,37 @@ class ServiceOperation:
 
     #---------------------------------------------------------------------------
 
-    def assign_renege_time(self, alpha, beta, scale, loc):
+    def assign_renege_time(self, mean_patience):
         '''
             Getter to assign patience to user
             user patience follows a beta distribution
 
-            param:  alpha - alpha shape parameter
+            param:  mean_patience - mean patience
                     beta - beta shape parameter
                     scale - scale to apply to the standardized beta distribution
 
             returns - renege time
         '''
-        renege_time = betavariate.rvs(alpha, beta, loc=loc, scale=scale)
+        renege_time = random.expovariate(1/mean_patience)
         if renege_time <= 0:
             return 0.1
         return renege_time
+
+    # def assign_renege_time(self, alpha, beta, scale, loc):
+    #     '''
+    #         Getter to assign patience to user
+    #         user patience follows a beta distribution
+
+    #         param:  alpha - alpha shape parameter
+    #                 beta - beta shape parameter
+    #                 scale - scale to apply to the standardized beta distribution
+
+    #         returns - renege time
+    #     '''
+    #     renege_time = betavariate.rvs(alpha, beta, loc=loc, scale=scale)
+    #     if renege_time <= 0:
+    #         return 0.1
+    #     return renege_time
 
     #---------------------------------------------------------------------------
 
@@ -1415,18 +1441,6 @@ class ServiceOperation:
         '''
         
         options = list(TOS)
-        probability = [x.value[-1] for x in options]
-
-        return random.choices(options, probability)[0]
-
-    #---------------------------------------------------------------------------
-
-    def assign_case_status(self):
-        '''
-            Getter to assign TOS status
-        '''
-        
-        options = list(CaseStatus)
         probability = [x.value[-1] for x in options]
 
         return random.choices(options, probability)[0]

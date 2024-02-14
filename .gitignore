@@ -26,3 +26,14 @@ table.csv
 table2.csv
 untitled
 user_states.gv
+community_kitchen/
+breakdown-template*
+*.xlsx
+*.csv
+img_output/
+interarrivals_day_of_week*
+queue_simulation_paper
+*.log
+desc_stats.ipynb
+elsarticle-model-wise-bst-2.1/
+queue_interarrival_service_duration_exploration-Copy1.ipynb
