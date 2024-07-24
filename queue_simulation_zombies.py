@@ -39,13 +39,13 @@ logging.basicConfig(
     filename='debug.log'
 )
 
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-NOV_INTERARRIVALS = os.path.expanduser(
-    '~/csrp/openup-queue-simulation/real_interarrivals_nov.csv')
+NOV_INTERARRIVALS = os.path.join(PROJECT_DIR,
+    'real_interarrivals_nov.csv')
 
-
-INTERARRIVALS_FILE = os.path.expanduser(
-    '~/csrp/openup-queue-simulation/interarrivals_day_of_week_hour/Oct2020_to_Nov2020/interarrivals_day_of_week_hour.csv')
+INTERARRIVALS_FILE = os.path.join(PROJECT_DIR,
+    'interarrivals_day_of_week_hour/Oct2020_to_Nov2020/interarrivals_day_of_week_hour.csv')
 
 ################################################################################ 
 # Globals
